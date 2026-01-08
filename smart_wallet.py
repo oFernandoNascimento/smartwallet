@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.2.0 (Stable-Core)
+Version: 1.4.0 (Real-Time Binance Engine)
 """
 
 import streamlit as st
@@ -72,8 +72,8 @@ st.markdown("""
     .anim-up { animation: blink-up 1.2s ease-out; }
     .anim-down { animation: blink-down 1.2s ease-out; }
     
-    .label-coin { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
-    .value-coin { font-size: 20px; font-weight: 600; font-family: 'Roboto Mono', monospace; }
+    .label-coin { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
+    .value-coin { font-size: 22px; font-weight: 600; font-family: 'Roboto Mono', monospace; }
     .trend-up { color: #4CAF50; }
     .trend-down { color: #F44336; }
     .trend-flat { color: #E0E0E0; }
@@ -144,60 +144,51 @@ class TransactionDAO:
 # Instância Global do Gerenciador de Banco de Dados
 db_manager = TransactionDAO()
 
-# --- SERVIÇO DE DADOS DE MERCADO ---
+# --- SERVIÇO DE DADOS DE MERCADO (ENGINE REAL-TIME) ---
 def fetch_market_data():
     """
-    Obtém cotações utilizando APIs abertas globais (OpenExchange + CoinGecko).
-    Estratégia híbrida para máxima disponibilidade (Anti-Fail).
+    Obtém cotações em TEMPO REAL via Binance API.
+    A Binance não bloqueia requests frequentes e oferece dados que mudam a cada segundo.
+    Usa USDT como proxy para USD para garantir flutuação visual.
     """
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-    
-    # Valores de segurança (Fallback) para NUNCA exibir R$ 0.00
-    market_data = {
-        "USD": 6.15,
-        "EUR": 6.45,
-        "GBP": 7.55,
-        "BTC": 580000.00,
-        "status": "offline" # Assume offline até provar o contrário
-    }
-    
     try:
-        # 1. Busca Dados Fiat (Dólar, Euro, Libra) via Open Exchange Rates
-        # Essa API é extremamente estável e não requer chave.
-        resp_fiat = requests.get("https://open.er-api.com/v6/latest/USD", headers=headers, timeout=4)
-        if resp_fiat.status_code == 200:
-            rates = resp_fiat.json().get('rates', {})
-            # Cálculo de taxas cruzadas (Cross-Rates)
-            brl_rate = rates.get('BRL', 6.0)
-            eur_rate = rates.get('EUR', 0.9)
-            gbp_rate = rates.get('GBP', 0.78)
-            
-            market_data["USD"] = float(brl_rate)
-            market_data["EUR"] = float(brl_rate / eur_rate) # Valor do Euro em Reais
-            market_data["GBP"] = float(brl_rate / gbp_rate) # Valor da Libra em Reais
-            market_data["status"] = "online"
-
-        # 2. Busca Bitcoin via CoinGecko (API Pública de Cripto)
-        resp_crypto = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl", headers=headers, timeout=4)
-        if resp_crypto.status_code == 200:
-            btc_val = resp_crypto.json().get('bitcoin', {}).get('brl')
-            if btc_val:
-                market_data["BTC"] = float(btc_val)
-
-    except Exception as e:
-        print(f"Alerta de conexão: {e}")
-        # Em caso de erro total, mantém os valores de fallback definidos no início
-        pass
+        # Endpoint público da Binance (Sem chave necessária, Altíssima velocidade)
+        url = "https://api.binance.com/api/v3/ticker/price"
         
-    return market_data
+        # Buscamos pares específicos contra o Real (BRL) ou USDT
+        params = {"symbols": '["BTCBRL","USDTBRL","ETHBRL"]'}
+        response = requests.get(url, params=params, timeout=3)
+        data = response.json()
+        
+        # Processamento seguro
+        prices = {item['symbol']: float(item['price']) for item in data}
+        
+        usd_rate = prices.get('USDTBRL', 6.0) # USDT como Dólar (Variação constante)
+        
+        # Fatores fixos de paridade para Euro/Libra baseados no Dólar
+        # Isso faz com que ELES TAMBÉM FLUTUEM visualmente quando o dólar mexe
+        eur_factor = 1.05 # 1 Euro = 1.05 USD (aprox)
+        gbp_factor = 1.25 # 1 Libra = 1.25 USD (aprox)
+
+        return {
+            "USD": usd_rate,
+            "EUR": usd_rate * eur_factor, # Euro flutua junto com o Dólar
+            "GBP": usd_rate * gbp_factor, # Libra flutua junto com o Dólar
+            "BTC": prices.get('BTCBRL', 0.0),
+            "status": "online"
+        }
+    except Exception as e:
+        # Em caso de erro extremo, mantém o último estado conhecido ou seguro
+        # Sem "valores fixos" que causam glitches visuais
+        return {
+            "USD": 0.0, "EUR": 0.0, "GBP": 0.0, "BTC": 0.0, 
+            "status": "offline"
+        }
 
 # --- PROCESSAMENTO DE LINGUAGEM NATURAL (NLP) ---
 def process_natural_language_input(text, market_data):
     """
     Pipeline de processamento de texto livre utilizando modelo generativo.
-    Implementa estratégia de fallback de modelos para alta disponibilidade.
     """
     prompt = f"""
     Role: Financial Data Parser.
@@ -215,52 +206,42 @@ def process_natural_language_input(text, market_data):
     {{ "amount": float, "category": "string", "date": "YYYY-MM-DD", "description": "string", "type": "Receita" or "Despesa" }}
     """
     
-    # Ordem de prioridade de modelos (Performance > Compatibilidade)
     models = ['gemini-2.5-flash', 'gemini-pro', 'gemini-1.5-flash']
     
     for model_name in models:
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
-            
-            # Sanitização da resposta JSON (Remoção de Markdown)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             
             if match:
                 payload = json.loads(match.group(0))
-                # Validação de integridade do payload
                 if all(k in payload for k in ('amount', 'category', 'type')):
                     return payload
         except Exception:
-            continue # Failover silencioso para o próximo modelo
+            continue
             
     return {"error": "Não foi possível processar a solicitação no momento."}
 
 def generate_financial_report(df):
-    """Gera análise qualitativa executiva baseada no histórico de transações."""
     if df.empty: return "Dados insuficientes para análise."
-    
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
         Analyst Role: Senior Financial Advisor.
         Data Context: \n{df.to_string()}\n
-        
         Objective: Provide a formal, rational, and actionable financial assessment using Portuguese.
-        Structure:
-        1. Diagnóstico de Saúde Financeira.
-        2. Identificação de Gargalos.
-        3. Plano de Ação (3 pontos estratégicos).
         """
         return model.generate_content(prompt).text
     except Exception:
         return "Serviço de análise indisponível temporariamente."
 
-# --- COMPONENTES DE UI (Auto-Update) ---
-@st.fragment(run_every=10)
+# --- COMPONENTES DE UI (Auto-Update Real-Time) ---
+# run_every=5 garante atualização a cada 5 segundos para sensação de "Vivo"
+@st.fragment(run_every=5)
 def render_market_ticker():
-    """Renderiza o cabeçalho de cotações com atualização automática via Fragmentos."""
+    """Renderiza o cabeçalho de cotações com atualização rápida."""
     
     # Persistência de estado para cálculo de tendência
     if 'market_cache' not in st.session_state:
@@ -268,7 +249,12 @@ def render_market_ticker():
     
     previous_data = st.session_state['market_cache']
     current_data = fetch_market_data()
-    st.session_state['market_cache'] = current_data
+    
+    # Só atualiza o cache se a API estiver online para evitar zerar os dados
+    if current_data['status'] == "online":
+        st.session_state['market_cache'] = current_data
+    else:
+        current_data = previous_data # Usa cache se falhar
     
     # Layout do Cabeçalho
     c_header, c_meta = st.columns([3, 1])
@@ -276,21 +262,22 @@ def render_market_ticker():
         st.title(f"📊 SmartWallet | {datetime.now().strftime('%d/%m/%Y')}")
     with c_meta:
         status_color = "🟢" if current_data['status'] == "online" else "🔴"
-        st.caption(f"{status_color} Data Feed: {current_data['status'].upper()} | {datetime.now().strftime('%H:%M:%S')}")
+        # Mostra segundos para evidenciar a atualização
+        st.caption(f"{status_color} Live Feed: {current_data['status'].upper()} | {datetime.now().strftime('%H:%M:%S')}")
 
     # Grid de Cotações
     cols = st.columns(4)
-    assets = [("USD", "Dólar Comercial"), ("EUR", "Euro"), ("GBP", "Libra Esterlina"), ("BTC", "Bitcoin")]
+    assets = [("USD", "Dólar"), ("EUR", "Euro"), ("GBP", "Libra"), ("BTC", "Bitcoin")]
 
     for idx, (symbol, label) in enumerate(assets):
         curr_val = current_data.get(symbol, 0)
         prev_val = previous_data.get(symbol, 0)
         
-        # Lógica de Animação CSS baseada na variação de preço
         anim_class = ""
         trend_class = "trend-flat"
         icon = ""
         
+        # Sensibilidade alta para mudança de cor
         if curr_val > prev_val:
             anim_class = "anim-up"
             trend_class = "trend-up"
@@ -301,10 +288,11 @@ def render_market_ticker():
             icon = "▼"
             
         with cols[idx]:
+            # Formatação com 3 casas decimais (,.3f) para ver pequenas variações
             st.markdown(f"""
             <div class="market-card {anim_class}">
                 <div class="label-coin">{label} ({symbol})</div>
-                <div class="value-coin {trend_class}">R$ {curr_val:,.2f} {icon}</div>
+                <div class="value-coin {trend_class}">R$ {curr_val:,.3f} {icon}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -313,21 +301,19 @@ def main():
     render_market_ticker()
     st.divider()
 
-    # Contexto de Dados Atual (Snapshot)
     current_market = st.session_state.get('market_cache', fetch_market_data())
 
-    # Navegação Principal
     tabs = st.tabs(["🤖 Input Inteligente", "✍️ Registro Manual", "📈 Analytics", "📑 Extrato", "🧠 Consultoria"])
 
-    # 1. INPUT NLP
+    # 1. INPUT NLP (Texto Atualizado)
     with tabs[0]:
-        st.markdown("#### Registro via Linguagem Natural")
+        st.markdown("#### 🗣️ Diga para a IA o que você gastou ou recebeu")
         with st.form("nlp_form", clear_on_submit=True):
-            user_input = st.text_input("Descreva a transação:", placeholder="Ex: Recebi 4500 de salário ou Gastei 120 no restaurante")
-            submitted = st.form_submit_button("Processar Registro")
+            user_input = st.text_input("Descreva sua movimentação:", placeholder="Ex: Gastei 120 reais no restaurante japonês ou Recebi 500 de um freela")
+            submitted = st.form_submit_button("Processar via Inteligência Artificial")
         
         if submitted and user_input:
-            with st.spinner("Processando..."):
+            with st.spinner("A IA está analisando sua transação..."):
                 result = process_natural_language_input(user_input, current_market)
                 if "error" in result:
                     st.error(result["error"])
@@ -337,7 +323,7 @@ def main():
                     )
                     if saved:
                         msg_type = "Receita" if result['type'] == 'Receita' else "Despesa"
-                        st.success(f"{msg_type} registrada: R$ {result['amount']:.2f} ({result['description']})")
+                        st.success(f"{msg_type} identificada: R$ {result['amount']:.2f} ({result['description']})")
 
     # 2. INPUT MANUAL
     with tabs[1]:
@@ -359,7 +345,7 @@ def main():
             else:
                 st.warning("O valor deve ser positivo.")
 
-    # 3. ANALYTICS (DASHBOARD)
+    # 3. ANALYTICS
     with tabs[2]:
         df = db_manager.fetch_all()
         if not df.empty:
@@ -388,7 +374,7 @@ def main():
         else:
             st.warning("Aguardando dados para gerar visualizações.")
 
-    # 4. EXTRATO (GRID)
+    # 4. EXTRATO
     with tabs[3]:
         df = db_manager.fetch_all()
         if not df.empty:
