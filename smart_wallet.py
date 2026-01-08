@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.3.1 (Stable Edition)
+Version: 1.3.2 (Google-Aligned Edition)
 """
 
 import streamlit as st
@@ -147,49 +147,47 @@ db_manager = TransactionDAO()
 # --- SERVIÇO DE DADOS DE MERCADO ---
 def fetch_market_data():
     """
-    Obtém cotações utilizando Frankfurter (Moedas Fiat) e Binance (Cripto).
-    Combinação otimizada para estabilidade em ambientes Cloud.
+    Obtém cotações utilizando Frankfurter (Moedas Fiat) e AwesomeAPI (Bitcoin).
+    Ajustado para refletir melhor o mercado BRL (Google Finance/Mercado Bitcoin).
     """
     headers = {"User-Agent": "Mozilla/5.0"}
     
-    # 1. Valores de segurança (Preenchidos para evitar R$ 0.00 em caso de falha total)
+    # 1. Valores de segurança atualizados com base no print do Google (08/01/2026)
+    # Isso evita sustos se a internet falhar
     market_data = {
-        "USD": 6.05,
-        "EUR": 6.35,
-        "GBP": 7.45,
-        "BTC": 540000.00, # Ajustado para um valor base mais realista
+        "USD": 5.39,
+        "EUR": 6.28,
+        "GBP": 7.24,
+        "BTC": 490775.00, # Valor ajustado ao seu print
         "status": "offline" 
     }
     
     try:
         # 2. Busca Dados Fiat (Frankfurter API - Banco Central Europeu)
-        # Mais confiável para conexões sem chave de API
         # USD -> BRL
-        resp_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=3)
+        resp_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=2)
         if resp_usd.status_code == 200:
             market_data["USD"] = float(resp_usd.json()['rates']['BRL'])
             market_data["status"] = "online"
 
         # EUR -> BRL
-        resp_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=3)
+        resp_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=2)
         if resp_eur.status_code == 200:
             market_data["EUR"] = float(resp_eur.json()['rates']['BRL'])
 
         # GBP -> BRL
-        resp_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=3)
+        resp_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=2)
         if resp_gbp.status_code == 200:
             market_data["GBP"] = float(resp_gbp.json()['rates']['BRL'])
 
-        # 3. Busca Bitcoin via Binance API (Mais estável e rápido que CoinGecko)
-        # Endpoint público da Binance não requer chave para ticker simples
-        resp_crypto = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL", headers=headers, timeout=3)
-        if resp_crypto.status_code == 200:
-            btc_val = resp_crypto.json().get('price')
-            if btc_val:
-                market_data["BTC"] = float(btc_val)
+        # 3. Busca Bitcoin via AwesomeAPI (Melhor fonte para BTC em Reais)
+        # Geralmente bate com o Google pois agrega Foxbit, Mercado Bitcoin, etc.
+        resp_btc = requests.get("https://economia.awesomeapi.com.br/last/BTC-BRL", headers=headers, timeout=2)
+        if resp_btc.status_code == 200:
+            btc_val = resp_btc.json()['BTCBRL']['bid']
+            market_data["BTC"] = float(btc_val)
 
     except Exception as e:
-        print(f"Alerta de conexão: {e}")
         # Mantém os valores de segurança se der erro
         pass
         
@@ -275,7 +273,7 @@ def render_market_ticker():
     # Layout do Cabeçalho
     c_header, c_meta = st.columns([3, 1])
     with c_header:
-        # A data aqui será atualizada automaticamente a cada 10s ou reload
+        # A data e hora serão atualizadas automaticamente
         st.title(f"📊 SmartWallet | {datetime.now().strftime('%d/%m/%Y')}")
     with c_meta:
         status_color = "🟢" if current_data['status'] == "online" else "🔴"
