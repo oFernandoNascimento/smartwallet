@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 3.0.0 (Binance Cross-Rate Engine)
+Version: 1.3.0 (Frankfurter Edition)
 """
 
 import streamlit as st
@@ -17,9 +17,9 @@ import requests
 import json
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# --- CONFIGURAÇÃO DO AMBIENTE ---
+# --- CONFIGURAÇÃO DO AMBIENTE E LAYOUT ---
 st.set_page_config(
     page_title="SmartWallet | Gestão Financeira",
     page_icon="💼",
@@ -27,57 +27,66 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- CREDENCIAIS ---
+# --- GERENCIAMENTO DE CREDENCIAIS E SEGURANÇA ---
 def configure_api():
+    """
+    Configura a conexão com a API de LLM utilizando variáveis de ambiente seguras.
+    Requer o arquivo .streamlit/secrets.toml configurado.
+    """
     try:
+        # Tenta recuperar a chave dos segredos do ambiente (Melhor Prática de Segurança)
         api_key = st.secrets.get("GEMINI_KEY")
-        if api_key:
-            genai.configure(api_key=api_key)
-    except Exception:
-        pass
+        if not api_key:
+            raise ValueError("Chave de API não detectada nos segredos do ambiente.")
+        genai.configure(api_key=api_key)
+    except Exception as e:
+        st.error(f"Erro de Configuração de Ambiente: {e}")
+        st.stop()
 
 configure_api()
 
-# --- CSS (VISUAL "MERCADO FINANCEIRO") ---
+# --- ESTILIZAÇÃO CSS (INTERFACE MODERNA) ---
 st.markdown("""
     <style>
-    /* Animações de Alta Frequência */
-    @keyframes flash-green {
-        0% { background-color: #0E1117; color: #4CAF50; }
-        50% { background-color: rgba(76, 175, 80, 0.2); color: #fff; }
-        100% { background-color: #0E1117; color: #4CAF50; }
+    /* Animações de Feedback Visual (Market Data) */
+    @keyframes blink-up {
+        0% { background-color: #0E1117; border-color: #444; }
+        50% { background-color: rgba(76, 175, 80, 0.15); border-color: #4CAF50; transform: scale(1.01); }
+        100% { background-color: #0E1117; border-color: #444; }
     }
-    @keyframes flash-red {
-        0% { background-color: #0E1117; color: #F44336; }
-        50% { background-color: rgba(244, 67, 54, 0.2); color: #fff; }
-        100% { background-color: #0E1117; color: #F44336; }
+    @keyframes blink-down {
+        0% { background-color: #0E1117; border-color: #444; }
+        50% { background-color: rgba(244, 67, 54, 0.15); border-color: #F44336; transform: scale(1.01); }
+        100% { background-color: #0E1117; border-color: #444; }
     }
 
+    /* Componentes de UI */
     .market-card { 
         background-color: #0E1117; 
         border: 1px solid #333; 
         border-radius: 8px; 
-        padding: 15px; 
+        padding: 12px; 
         text-align: center;
+        transition: border-color 0.3s ease;
     }
+    .anim-up { animation: blink-up 1.2s ease-out; }
+    .anim-down { animation: blink-down 1.2s ease-out; }
     
-    .value-coin { 
-        font-size: 26px; 
-        font-weight: 700; 
-        font-family: 'Consolas', 'Courier New', monospace;
-        margin: 5px 0;
-    }
+    .label-coin { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
+    .value-coin { font-size: 20px; font-weight: 600; font-family: 'Roboto Mono', monospace; }
+    .trend-up { color: #4CAF50; }
+    .trend-down { color: #F44336; }
+    .trend-flat { color: #E0E0E0; }
     
-    .anim-up { animation: flash-green 0.8s ease-out; }
-    .anim-down { animation: flash-red 0.8s ease-out; }
-    
-    .label-coin { font-size: 12px; color: #888; letter-spacing: 1px; }
-    .delta-indicator { font-size: 11px; opacity: 0.8; }
+    /* Ajustes Gerais */
+    div[data-testid="stMetricValue"] { font-size: 24px; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- BANCO DE DADOS (DAO) ---
+# --- CAMADA DE PERSISTÊNCIA (DAO) ---
 class TransactionDAO:
+    """Data Access Object para manipulação segura e transacional do SQLite."""
+    
     def __init__(self, db_path='smartwallet.db'):
         self.db_path = db_path
         self._init_schema()
@@ -86,6 +95,7 @@ class TransactionDAO:
         return sqlite3.connect(self.db_path)
 
     def _init_schema(self):
+        """Inicializa o esquema do banco de dados com tratamento de exceção."""
         conn = None
         try:
             conn = self._get_connection()
@@ -101,7 +111,8 @@ class TransactionDAO:
                 )
             ''')
             conn.commit()
-        except sqlite3.Error: pass
+        except sqlite3.Error as e:
+            st.error(f"Erro crítico de I/O no banco de dados: {e}")
         finally:
             if conn: conn.close()
 
@@ -110,11 +121,13 @@ class TransactionDAO:
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute('INSERT INTO transactions (date, amount, category, description, type) VALUES (?, ?, ?, ?, ?)', 
-                          (date, amount, category, description, type_))
+            cursor.execute('''
+                INSERT INTO transactions (date, amount, category, description, type) 
+                VALUES (?, ?, ?, ?, ?)''', (date, amount, category, description, type_))
             conn.commit()
             return True
-        except: return False
+        except Exception:
+            return False
         finally:
             if conn: conn.close()
 
@@ -123,190 +136,298 @@ class TransactionDAO:
         try:
             conn = self._get_connection()
             return pd.read_sql_query("SELECT * FROM transactions ORDER BY date DESC, id DESC", conn)
-        except: return pd.DataFrame()
+        except Exception:
+            return pd.DataFrame()
         finally:
             if conn: conn.close()
 
+# Instância Global do Gerenciador de Banco de Dados
 db_manager = TransactionDAO()
 
-# --- ENGINE FINANCEIRO (BINANCE CROSS-RATE) ---
+# --- SERVIÇO DE DADOS DE MERCADO ---
 def fetch_market_data():
     """
-    Busca dados na Binance.
-    ESTRATÉGIA:
-    1. Pega USDT/BRL (Dólar/Real)
-    2. Pega EUR/USDT e GBP/USDT (Euro/Dólar e Libra/Dólar)
-    3. Calcula Euro/Real multiplicando (EUR/USDT * USDT/BRL)
-    Isso garante dados 24/7 sem bloqueio de IP.
+    Obtém cotações utilizando Frankfurter (Moedas Fiat) e CoinGecko (Cripto).
+    Combinação otimizada para estabilidade em ambientes Cloud.
     """
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    # 1. Valores de segurança (Preenchidos para evitar R$ 0.00 em caso de falha total)
+    market_data = {
+        "USD": 6.05,
+        "EUR": 6.35,
+        "GBP": 7.45,
+        "BTC": 580000.00,
+        "status": "offline" 
+    }
+    
     try:
-        url = "https://api.binance.com/api/v3/ticker/price"
-        # Buscamos os pares necessários para a triangulação
-        params = {"symbols": '["USDTBRL","BTCBRL","EURUSDT","GBPUSDT"]'}
-        
-        r = requests.get(url, params=params, timeout=2)
-        if r.status_code != 200: return None
-        
-        data = {item['symbol']: float(item['price']) for item in r.json()}
-        
-        # Cotação Base (Dólar via Tether)
-        usd_brl = data.get('USDTBRL', 0)
-        
-        # Cálculo Cruzado (Cross-Rate)
-        eur_brl = data.get('EURUSDT', 0) * usd_brl
-        gbp_brl = data.get('GBPUSDT', 0) * usd_brl
-        btc_brl = data.get('BTCBRL', 0)
-        
-        return {
-            "USD": usd_brl,
-            "EUR": eur_brl,
-            "GBP": gbp_brl,
-            "BTC": btc_brl,
-            "status": "online",
-            "timestamp": time.time()
-        }
-    except Exception:
-        return None
+        # 2. Busca Dados Fiat (Frankfurter API - Banco Central Europeu)
+        # Mais confiável para conexões sem chave de API
+        # USD -> BRL
+        resp_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=3)
+        if resp_usd.status_code == 200:
+            market_data["USD"] = float(resp_usd.json()['rates']['BRL'])
+            market_data["status"] = "online"
 
-# --- NLP ---
-def process_nlp(text, rates):
-    usd = rates.get('USD', 6.0)
-    prompt = f"""
-    Role: Financial Parser. Date: {datetime.now().strftime('%Y-%m-%d')}
-    Input: "{text}"
-    Rates: USD={usd:.2f}
-    Output JSON: {{ "amount": float, "category": "str", "date": "YYYY-MM-DD", "description": "str", "type": "Receita"|"Despesa" }}
+        # EUR -> BRL
+        resp_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=3)
+        if resp_eur.status_code == 200:
+            market_data["EUR"] = float(resp_eur.json()['rates']['BRL'])
+
+        # GBP -> BRL
+        resp_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=3)
+        if resp_gbp.status_code == 200:
+            market_data["GBP"] = float(resp_gbp.json()['rates']['BRL'])
+
+        # 3. Busca Bitcoin via CoinGecko (Já validado e funcionando)
+        resp_crypto = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl", headers=headers, timeout=3)
+        if resp_crypto.status_code == 200:
+            btc_val = resp_crypto.json().get('bitcoin', {}).get('brl')
+            if btc_val:
+                market_data["BTC"] = float(btc_val)
+
+    except Exception as e:
+        print(f"Alerta de conexão: {e}")
+        # Mantém os valores de segurança se der erro
+        pass
+        
+    return market_data
+
+# --- PROCESSAMENTO DE LINGUAGEM NATURAL (NLP) ---
+def process_natural_language_input(text, market_data):
     """
+    Pipeline de processamento de texto livre utilizando modelo generativo.
+    Implementa estratégia de fallback de modelos para alta disponibilidade.
+    """
+    prompt = f"""
+    Role: Financial Data Parser.
+    Context Date: {datetime.now().strftime('%Y-%m-%d')}
+    User Input: "{text}"
+    Reference Rates: USD={market_data['USD']}, EUR={market_data['EUR']}
+    
+    Task:
+    1. Identify transaction type ('Receita' or 'Despesa').
+    2. Convert foreign currencies to BRL using reference rates.
+    3. Format description in formal Portuguese (Capitalized).
+    4. If conversion occurs, append "(Orig: CURRENCY VALUE)" to description.
+    
+    Output Format (JSON Only):
+    {{ "amount": float, "category": "string", "date": "YYYY-MM-DD", "description": "string", "type": "Receita" or "Despesa" }}
+    """
+    
+    # Ordem de prioridade de modelos (Performance > Compatibilidade)
+    models = ['gemini-2.5-flash', 'gemini-pro', 'gemini-1.5-flash']
+    
+    for model_name in models:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            
+            # Sanitização da resposta JSON (Remoção de Markdown)
+            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            match = re.search(r'\{.*\}', clean_text, re.DOTALL)
+            
+            if match:
+                payload = json.loads(match.group(0))
+                # Validação de integridade do payload
+                if all(k in payload for k in ('amount', 'category', 'type')):
+                    return payload
+        except Exception:
+            continue # Failover silencioso para o próximo modelo
+            
+    return {"error": "Não foi possível processar a solicitação no momento."}
+
+def generate_financial_report(df):
+    """Gera análise qualitativa executiva baseada no histórico de transações."""
+    if df.empty: return "Dados insuficientes para análise."
+    
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
-        res = model.generate_content(prompt)
-        clean = res.text.replace("```json", "").replace("```", "").strip()
-        match = re.search(r'\{.*\}', clean, re.DOTALL)
-        if match: return json.loads(match.group(0))
-    except: return {"error": "IA indisponível."}
-    return {"error": "Erro no processamento."}
-
-def generate_report(df):
-    if df.empty: return "Sem dados."
-    try:
-        return genai.GenerativeModel('gemini-2.5-flash').generate_content(f"Analise em PT-BR:\n{df.to_string()}").text
-    except: return "Erro."
-
-# --- WIDGET ---
-@st.fragment(run_every=3) # Atualiza a cada 3 segundos (Binance aguenta)
-def market_widget():
-    # Cache
-    if 'mkt' not in st.session_state:
-        st.session_state['mkt'] = {"USD": 0.0, "EUR": 0.0, "GBP": 0.0, "BTC": 0.0}
-    
-    prev = st.session_state['mkt']
-    curr = fetch_market_data()
-    
-    # Se a API responder, atualiza. Se falhar, mantém o último valor (não zera)
-    if curr:
-        st.session_state['mkt'] = curr
-    else:
-        curr = prev
+        prompt = f"""
+        Analyst Role: Senior Financial Advisor.
+        Data Context: \n{df.to_string()}\n
         
-    # Header
-    br_time = datetime.now() - timedelta(hours=3)
-    c1, c2 = st.columns([3, 1])
-    c1.title("📊 SmartWallet")
-    status = "🟢 Online (Binance Feed)" if curr.get('status') == 'online' else "🟠 Cache Mode"
-    c2.caption(f"{status} | {br_time.strftime('%H:%M:%S')}")
+        Objective: Provide a formal, rational, and actionable financial assessment using Portuguese.
+        Structure:
+        1. Diagnóstico de Saúde Financeira.
+        2. Identificação de Gargalos.
+        3. Plano de Ação (3 pontos estratégicos).
+        """
+        return model.generate_content(prompt).text
+    except Exception:
+        return "Serviço de análise indisponível temporariamente."
 
-    # Cards
+# --- COMPONENTES DE UI (Auto-Update) ---
+@st.fragment(run_every=10)
+def render_market_ticker():
+    """Renderiza o cabeçalho de cotações com atualização automática via Fragmentos."""
+    
+    # Persistência de estado para cálculo de tendência
+    if 'market_cache' not in st.session_state:
+        st.session_state['market_cache'] = fetch_market_data()
+    
+    previous_data = st.session_state['market_cache']
+    current_data = fetch_market_data()
+    st.session_state['market_cache'] = current_data
+    
+    # Layout do Cabeçalho
+    c_header, c_meta = st.columns([3, 1])
+    with c_header:
+        st.title(f"📊 SmartWallet | {datetime.now().strftime('%d/%m/%Y')}")
+    with c_meta:
+        status_color = "🟢" if current_data['status'] == "online" else "🔴"
+        st.caption(f"{status_color} Data Feed: {current_data['status'].upper()} | {datetime.now().strftime('%H:%M:%S')}")
+
+    # Grid de Cotações
     cols = st.columns(4)
-    assets = [("USD", "Dólar"), ("EUR", "Euro"), ("GBP", "Libra"), ("BTC", "Bitcoin")]
-    
-    for i, (sym, name) in enumerate(assets):
-        val = curr.get(sym, 0.0)
-        old = prev.get(sym, 0.0)
-        diff = val - old
+    assets = [("USD", "Dólar Comercial"), ("EUR", "Euro"), ("GBP", "Libra Esterlina"), ("BTC", "Bitcoin")]
+
+    for idx, (symbol, label) in enumerate(assets):
+        curr_val = current_data.get(symbol, 0)
+        prev_val = previous_data.get(symbol, 0)
         
-        # Animação apenas se o valor mudou
-        anim = ""
-        color = "#fff"
-        arrow = "▪"
+        # Lógica de Animação CSS baseada na variação de preço
+        anim_class = ""
+        trend_class = "trend-flat"
+        icon = ""
         
-        if diff > 0.00001: 
-            anim = "anim-up"
-            color = "#4CAF50"
-            arrow = "▲"
-        elif diff < -0.00001: 
-            anim = "anim-down"
-            color = "#F44336"
-            arrow = "▼"
+        if curr_val > prev_val:
+            anim_class = "anim-up"
+            trend_class = "trend-up"
+            icon = "▲"
+        elif curr_val < prev_val:
+            anim_class = "anim-down"
+            trend_class = "trend-down"
+            icon = "▼"
             
-        with cols[i]:
+        with cols[idx]:
             st.markdown(f"""
-            <div class="market-card">
-                <div class="label-coin">{name}</div>
-                <div class="value-coin {anim}" style="color: {color};">
-                    R$ {val:,.3f}
-                </div>
-                <div class="delta-indicator">
-                    {arrow} {abs(diff):.3f} (3s)
-                </div>
+            <div class="market-card {anim_class}">
+                <div class="label-coin">{label} ({symbol})</div>
+                <div class="value-coin {trend_class}">R$ {curr_val:,.2f} {icon}</div>
             </div>
             """, unsafe_allow_html=True)
 
-# --- MAIN ---
+# --- EXECUÇÃO PRINCIPAL ---
 def main():
-    market_widget()
+    render_market_ticker()
     st.divider()
-    
-    mkt = st.session_state.get('mkt', {})
-    
-    tabs = st.tabs(["🤖 IA Input", "✍️ Manual", "📈 Dashboard", "📋 Extrato", "🧠 Advisor"])
-    
+
+    # Contexto de Dados Atual (Snapshot)
+    current_market = st.session_state.get('market_cache', fetch_market_data())
+
+    # Navegação Principal
+    tabs = st.tabs(["🤖 Input Inteligente", "✍️ Registro Manual", "📈 Analytics", "📑 Extrato", "🧠 Consultoria"])
+
+    # 1. INPUT NLP
     with tabs[0]:
-        st.markdown("#### 🗣️ IA Financeira")
-        with st.form("nlp"):
-            txt = st.text_input("Ex: Recebi 2500 de consultoria", key="nlp")
-            if st.form_submit_button("Lançar") and txt:
-                with st.spinner("Processando..."):
-                    res = process_nlp(txt, mkt)
-                    if "error" in res: st.error(res['error'])
-                    elif db_manager.insert_transaction(res['date'], res['amount'], res['category'], res['description'], res['type']):
-                        st.success(f"✅ {res['type']}: R$ {res['amount']}")
-                        time.sleep(1)
-                        st.rerun()
+        st.markdown("#### 🗣️ Diga para a IA o que você gastou ou recebeu")
+        with st.form("nlp_form", clear_on_submit=True):
+            user_input = st.text_input("Descreva sua movimentação:", placeholder="Ex: Gastei 120 reais no restaurante japonês ou Recebi 500 de um freela")
+            submitted = st.form_submit_button("Processar via Inteligência Artificial")
+        
+        if submitted and user_input:
+            with st.spinner("A IA está analisando sua transação..."):
+                result = process_natural_language_input(user_input, current_market)
+                if "error" in result:
+                    st.error(result["error"])
+                else:
+                    saved = db_manager.insert_transaction(
+                        result['date'], result['amount'], result['category'], result['description'], result['type']
+                    )
+                    if saved:
+                        msg_type = "Receita" if result['type'] == 'Receita' else "Despesa"
+                        st.success(f"{msg_type} identificada: R$ {result['amount']:.2f} ({result['description']})")
 
+    # 2. INPUT MANUAL
     with tabs[1]:
-        c1, c2 = st.columns([1, 2])
-        tipo = c1.radio("Tipo", ["Receita", "Despesa"])
-        val = c2.number_input("Valor", min_value=0.0, step=10.0)
-        cat = st.selectbox("Categoria", ["Alimentação", "Transporte", "Lazer", "Salário", "Outros"])
-        desc = st.text_input("Descrição")
-        if st.button("Salvar"):
-            db_manager.insert_transaction(datetime.now(), val, cat, desc or cat, tipo)
-            st.success("Salvo!")
-            st.rerun()
+        st.markdown("#### Registro Estruturado")
+        col_type, col_val = st.columns([1, 2])
+        trans_type = col_type.radio("Tipo:", ["Receita", "Despesa"], horizontal=True)
+        
+        categories = ["Salário", "Investimentos", "Outros"] if trans_type == "Receita" else \
+                     ["Alimentação", "Moradia", "Transporte", "Lazer", "Educação", "Saúde", "Serviços", "Outros"]
+        
+        amount = col_val.number_input("Valor (BRL)", min_value=0.0, step=10.0, format="%.2f")
+        category = st.selectbox("Categoria", categories)
+        desc = st.text_input("Descrição", placeholder="Detalhes opcionais")
+        
+        if st.button("Salvar Registro"):
+            if amount > 0:
+                db_manager.insert_transaction(datetime.now(), amount, category, desc or category, trans_type)
+                st.success("Registro salvo com sucesso.")
+            else:
+                st.warning("O valor deve ser positivo.")
 
+    # 3. ANALYTICS (DASHBOARD)
     with tabs[2]:
         df = db_manager.fetch_all()
         if not df.empty:
-            inc = df[df['type']=='Receita']['amount'].sum()
-            exp = df[df['type']=='Despesa']['amount'].sum()
+            income = df[df['type'] == 'Receita']['amount'].sum()
+            expense = df[df['type'] == 'Despesa']['amount'].sum()
+            balance = income - expense
+            
             c1, c2, c3 = st.columns(3)
-            c1.metric("Entradas", f"R$ {inc:,.2f}")
-            c2.metric("Saídas", f"R$ {exp:,.2f}")
-            c3.metric("Saldo", f"R$ {inc-exp:,.2f}")
-            st.plotly_chart(px.pie(df[df['type']=='Despesa'], values='amount', names='category', hole=0.5))
+            c1.metric("Entradas Totais", f"R$ {income:,.2f}")
+            c2.metric("Saídas Totais", f"R$ {expense:,.2f}")
+            c3.metric("Saldo Líquido", f"R$ {balance:,.2f}", delta="Positivo" if balance >= 0 else "Negativo")
+            
+            st.divider()
+            
+            st.subheader("Análise de Despesas por Categoria")
+            expense_data = df[df['type'] == 'Despesa'].groupby("category")['amount'].sum().reset_index()
+            
+            if not expense_data.empty:
+                fig = px.pie(expense_data, values='amount', names='category', 
+                             color_discrete_sequence=px.colors.qualitative.Prism,
+                             hole=0.4)
+                fig.update_traces(textposition='outside', textinfo='percent+label')
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Sem dados de despesa para visualização.")
+        else:
+            st.warning("Aguardando dados para gerar visualizações.")
 
+    # 4. EXTRATO (GRID)
     with tabs[3]:
-        st.dataframe(db_manager.fetch_all(), use_container_width=True)
-        if st.button("Limpar Dados"):
-            try: 
-                import os
-                os.remove("smartwallet.db")
-                st.rerun()
-            except: pass
+        df = db_manager.fetch_all()
+        if not df.empty:
+            display_df = df.rename(columns={
+                'date': 'Data', 'amount': 'Valor', 'category': 'Categoria', 
+                'description': 'Descrição', 'type': 'Tipo'
+            })[['Data', 'Tipo', 'Categoria', 'Descrição', 'Valor']]
+            
+            def apply_style(styler):
+                styler.set_properties(**{'text-align': 'center', 'border': '1px solid #333'})
+                styler.set_table_styles([{'selector': 'th', 'props': [('background-color', '#262730'), ('color', 'white')]}])
+                styler.apply(lambda x: ['background-color: rgba(76, 175, 80, 0.2); color: #fff' if x['Tipo'] == 'Receita' 
+                                      else 'background-color: rgba(244, 67, 54, 0.2); color: #fff' for _ in x], axis=1)
+                styler.format({'Valor': 'R$ {:,.2f}'})
+                return styler
 
+            st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
+            
+            if st.button("Reiniciar Banco de Dados"):
+                try:
+                    import os
+                    if os.path.exists("smartwallet.db"): os.remove("smartwallet.db")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao reiniciar: {e}")
+
+    # 5. CONSULTORIA
     with tabs[4]:
-        if st.button("Consultar IA"):
-            st.write(generate_report(db_manager.fetch_all()))
+        st.markdown("#### Consultoria Financeira Avançada")
+        if st.button("Solicitar Diagnóstico"):
+            df = db_manager.fetch_all()
+            if not df.empty:
+                with st.spinner("Gerando análise..."):
+                    report = generate_financial_report(df)
+                    st.markdown("---")
+                    st.markdown(report)
+            else:
+                st.warning("É necessário histórico financeiro para esta análise.")
 
 if __name__ == "__main__":
     main()
