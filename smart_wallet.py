@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.0.0
+Version: 1.1.0
 """
 
 import streamlit as st
@@ -17,6 +17,7 @@ import requests
 import json
 import re
 import time
+import yfinance as yf
 from datetime import datetime
 
 # --- CONFIGURAÇÃO DO AMBIENTE E LAYOUT ---
@@ -147,29 +148,30 @@ db_manager = TransactionDAO()
 # --- SERVIÇO DE DADOS DE MERCADO ---
 def fetch_market_data():
     """
-    Obtém cotações em tempo real via API pública.
-    Inclui timeout para evitar latência na interface.
+    Obtém cotações em tempo real via Yahoo Finance (yfinance).
+    Mais robusto contra bloqueios de IP em ambientes Cloud.
     """
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        response = requests.get(
-            "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL", 
-            headers=headers, 
-            timeout=5
-        )
-        response.raise_for_status()
-        data = response.json()
+        # Utiliza o método fast_info do yfinance para maior performance
+        # BRL=X: Dólar/Real | EURBRL=X: Euro/Real | GBPBRL=X: Libra/Real | BTC-BRL: Bitcoin/Real
+        usd = yf.Ticker("BRL=X").fast_info['last_price']
+        eur = yf.Ticker("EURBRL=X").fast_info['last_price']
+        gbp = yf.Ticker("GBPBRL=X").fast_info['last_price']
+        btc = yf.Ticker("BTC-BRL").fast_info['last_price']
+        
+        # Validação simples para garantir que recebemos números
+        if not all(isinstance(x, (int, float)) for x in [usd, eur, gbp, btc]):
+            raise ValueError("Dados de cotação inválidos")
+
         return {
-            "USD": float(data['USDBRL']['bid']),
-            "EUR": float(data['EURBRL']['bid']),
-            "GBP": float(data['GBPBRL']['bid']),
-            "BTC": float(data['BTCBRL']['bid']),
+            "USD": float(usd),
+            "EUR": float(eur),
+            "GBP": float(gbp),
+            "BTC": float(btc),
             "status": "online"
         }
     except Exception:
-        # Fallback values em caso de indisponibilidade da API
+        # Fallback values em caso de erro na conexão com Yahoo Finance
         return {"USD": 0.0, "EUR": 0.0, "GBP": 0.0, "BTC": 0.0, "status": "offline"}
 
 # --- PROCESSAMENTO DE LINGUAGEM NATURAL (NLP) ---
