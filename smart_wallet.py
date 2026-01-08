@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.3.2 (Google-Aligned Edition)
+Version: 1.3.4 (Investments & Crypto Qty Edition)
 """
 
 import streamlit as st
@@ -148,47 +148,41 @@ db_manager = TransactionDAO()
 def fetch_market_data():
     """
     Obtém cotações utilizando Frankfurter (Moedas Fiat) e AwesomeAPI (Bitcoin).
-    Ajustado para refletir melhor o mercado BRL (Google Finance/Mercado Bitcoin).
+    Ajustado para refletir melhor o mercado BRL.
     """
     headers = {"User-Agent": "Mozilla/5.0"}
     
-    # 1. Valores de segurança atualizados com base no print do Google (08/01/2026)
-    # Isso evita sustos se a internet falhar
+    # 1. Valores de segurança (Fallback)
     market_data = {
         "USD": 5.39,
         "EUR": 6.28,
         "GBP": 7.24,
-        "BTC": 490775.00, # Valor ajustado ao seu print
+        "BTC": 490775.00,
         "status": "offline" 
     }
     
     try:
-        # 2. Busca Dados Fiat (Frankfurter API - Banco Central Europeu)
-        # USD -> BRL
+        # 2. Busca Dados Fiat (Frankfurter API)
         resp_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=2)
         if resp_usd.status_code == 200:
             market_data["USD"] = float(resp_usd.json()['rates']['BRL'])
             market_data["status"] = "online"
 
-        # EUR -> BRL
         resp_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=2)
         if resp_eur.status_code == 200:
             market_data["EUR"] = float(resp_eur.json()['rates']['BRL'])
 
-        # GBP -> BRL
         resp_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=2)
         if resp_gbp.status_code == 200:
             market_data["GBP"] = float(resp_gbp.json()['rates']['BRL'])
 
-        # 3. Busca Bitcoin via AwesomeAPI (Melhor fonte para BTC em Reais)
-        # Geralmente bate com o Google pois agrega Foxbit, Mercado Bitcoin, etc.
+        # 3. Busca Bitcoin via AwesomeAPI
         resp_btc = requests.get("https://economia.awesomeapi.com.br/last/BTC-BRL", headers=headers, timeout=2)
         if resp_btc.status_code == 200:
             btc_val = resp_btc.json()['BTCBRL']['bid']
             market_data["BTC"] = float(btc_val)
 
     except Exception as e:
-        # Mantém os valores de segurança se der erro
         pass
         
     return market_data
@@ -197,25 +191,27 @@ def fetch_market_data():
 def process_natural_language_input(text, market_data):
     """
     Pipeline de processamento de texto livre utilizando modelo generativo.
-    Implementa estratégia de fallback de modelos para alta disponibilidade.
     """
+    # Prompt ajustado para calcular quantidade de ativos (ex: BTC)
     prompt = f"""
     Role: Financial Data Parser.
     Context Date: {datetime.now().strftime('%Y-%m-%d')}
     User Input: "{text}"
-    Reference Rates: USD={market_data['USD']}, EUR={market_data['EUR']}
+    Reference Rates: USD={market_data['USD']}, EUR={market_data['EUR']}, GBP={market_data['GBP']}, BTC={market_data['BTC']}
     
     Task:
     1. Identify transaction type ('Receita' or 'Despesa').
     2. Convert foreign currencies to BRL using reference rates.
     3. Format description in formal Portuguese (Capitalized).
     4. If conversion occurs, append "(Orig: CURRENCY VALUE)" to description.
+    5. CRITICAL: If the user is BUYING an asset (Bitcoin, Stock, Dollar for holding), calculate the quantity = (Amount_BRL / Rate) and append "(Qty: X.XXXX ASSET)" to the description.
+       Example: "Comprei 1500 reais de Bitcoin" -> Description: "Aquisição de Bitcoin (Qty: 0.003056 BTC)".
+       Mark category as "Investimentos".
     
     Output Format (JSON Only):
     {{ "amount": float, "category": "string", "date": "YYYY-MM-DD", "description": "string", "type": "Receita" or "Despesa" }}
     """
     
-    # Ordem de prioridade de modelos (Performance > Compatibilidade)
     models = ['gemini-2.5-flash', 'gemini-pro', 'gemini-1.5-flash']
     
     for model_name in models:
@@ -223,17 +219,15 @@ def process_natural_language_input(text, market_data):
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
             
-            # Sanitização da resposta JSON (Remoção de Markdown)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             
             if match:
                 payload = json.loads(match.group(0))
-                # Validação de integridade do payload
                 if all(k in payload for k in ('amount', 'category', 'type')):
                     return payload
         except Exception:
-            continue # Failover silencioso para o próximo modelo
+            continue
             
     return {"error": "Não foi possível processar a solicitação no momento."}
 
@@ -262,7 +256,6 @@ def generate_financial_report(df):
 def render_market_ticker():
     """Renderiza o cabeçalho de cotações com atualização automática via Fragmentos."""
     
-    # Persistência de estado para cálculo de tendência
     if 'market_cache' not in st.session_state:
         st.session_state['market_cache'] = fetch_market_data()
     
@@ -270,16 +263,13 @@ def render_market_ticker():
     current_data = fetch_market_data()
     st.session_state['market_cache'] = current_data
     
-    # Layout do Cabeçalho
     c_header, c_meta = st.columns([3, 1])
     with c_header:
-        # A data e hora serão atualizadas automaticamente
         st.title(f"📊 SmartWallet | {datetime.now().strftime('%d/%m/%Y')}")
     with c_meta:
         status_color = "🟢" if current_data['status'] == "online" else "🔴"
         st.caption(f"{status_color} Data Feed: {current_data['status'].upper()} | {datetime.now().strftime('%H:%M:%S')}")
 
-    # Grid de Cotações
     cols = st.columns(4)
     assets = [("USD", "Dólar Comercial"), ("EUR", "Euro"), ("GBP", "Libra Esterlina"), ("BTC", "Bitcoin")]
 
@@ -287,7 +277,6 @@ def render_market_ticker():
         curr_val = current_data.get(symbol, 0)
         prev_val = previous_data.get(symbol, 0)
         
-        # Lógica de Animação CSS baseada na variação de preço
         anim_class = ""
         trend_class = "trend-flat"
         icon = ""
@@ -314,17 +303,16 @@ def main():
     render_market_ticker()
     st.divider()
 
-    # Contexto de Dados Atual (Snapshot)
     current_market = st.session_state.get('market_cache', fetch_market_data())
 
-    # Navegação Principal
-    tabs = st.tabs(["🤖 Input Inteligente", "✍️ Registro Manual", "📈 Analytics", "📑 Extrato", "🧠 Consultoria"])
+    # Adicionei "Investimentos" na lista de abas
+    tabs = st.tabs(["🤖 Input Inteligente", "✍️ Registro Manual", "📈 Analytics", "💰 Investimentos", "📑 Extrato", "🧠 Consultoria"])
 
     # 1. INPUT NLP
     with tabs[0]:
         st.markdown("#### 🗣️ Diga para a IA o que você gastou ou recebeu")
         with st.form("nlp_form", clear_on_submit=True):
-            user_input = st.text_input("Descreva sua movimentação:", placeholder="Ex: Gastei 120 reais no restaurante japonês ou Recebi 500 de um freela")
+            user_input = st.text_input("Descreva sua movimentação:", placeholder="Ex: Comprei 1500 reais em Bitcoin")
             submitted = st.form_submit_button("Processar via Inteligência Artificial")
         
         if submitted and user_input:
@@ -346,8 +334,9 @@ def main():
         col_type, col_val = st.columns([1, 2])
         trans_type = col_type.radio("Tipo:", ["Receita", "Despesa"], horizontal=True)
         
+        # Adicionei Investimentos nas opções de Despesa/Receita para ficar compatível
         categories = ["Salário", "Investimentos", "Outros"] if trans_type == "Receita" else \
-                     ["Alimentação", "Moradia", "Transporte", "Lazer", "Educação", "Saúde", "Serviços", "Outros"]
+                     ["Alimentação", "Moradia", "Transporte", "Lazer", "Educação", "Saúde", "Investimentos", "Serviços", "Outros"]
         
         amount = col_val.number_input("Valor (BRL)", min_value=0.0, step=10.0, format="%.2f")
         category = st.selectbox("Categoria", categories)
@@ -389,8 +378,32 @@ def main():
         else:
             st.warning("Aguardando dados para gerar visualizações.")
 
-    # 4. EXTRATO (GRID)
+    # 4. INVESTIMENTOS (NOVA ABA SIMPLES)
     with tabs[3]:
+        st.subheader("Carteira de Investimentos")
+        df = db_manager.fetch_all()
+        
+        if not df.empty:
+            # Filtra apenas a categoria Investimentos
+            invest_df = df[df['category'].isin(['Investimentos', 'Investimento'])]
+            
+            if not invest_df.empty:
+                # Soma Total
+                total_invested = invest_df['amount'].sum()
+                st.metric("Total Investido", f"R$ {total_invested:,.2f}")
+                
+                # Agrupa por Descrição (Nome do ativo) e soma os valores
+                grouped_invest = invest_df.groupby('description')['amount'].sum().reset_index().sort_values(by='amount', ascending=False)
+                grouped_invest.columns = ['Ativo / Descrição', 'Valor Total (R$)']
+                
+                st.table(grouped_invest.style.format({'Valor Total (R$)': 'R$ {:,.2f}'}))
+            else:
+                st.info("Nenhum registro classificado como 'Investimentos' encontrado.")
+        else:
+            st.warning("Sem dados.")
+
+    # 5. EXTRATO (GRID)
+    with tabs[4]:
         df = db_manager.fetch_all()
         if not df.empty:
             display_df = df.rename(columns={
@@ -416,8 +429,8 @@ def main():
                 except Exception as e:
                     st.error(f"Erro ao reiniciar: {e}")
 
-    # 5. CONSULTORIA
-    with tabs[4]:
+    # 6. CONSULTORIA
+    with tabs[5]:
         st.markdown("#### Consultoria Financeira Avançada")
         if st.button("Solicitar Diagnóstico"):
             df = db_manager.fetch_all()
