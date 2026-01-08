@@ -151,7 +151,14 @@ def fetch_market_data():
     Inclui timeout para evitar latência na interface.
     """
     try:
-        response = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL", timeout=2)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(
+            "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL", 
+            headers=headers, 
+            timeout=5
+        )
         response.raise_for_status()
         data = response.json()
         return {
