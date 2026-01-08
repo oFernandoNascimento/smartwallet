@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.1.0
+Version: 1.2.0 (Stable-Core)
 """
 
 import streamlit as st
@@ -17,7 +17,6 @@ import requests
 import json
 import re
 import time
-import yfinance as yf
 from datetime import datetime
 
 # --- CONFIGURAÇÃO DO AMBIENTE E LAYOUT ---
@@ -148,31 +147,51 @@ db_manager = TransactionDAO()
 # --- SERVIÇO DE DADOS DE MERCADO ---
 def fetch_market_data():
     """
-    Obtém cotações em tempo real via Yahoo Finance (yfinance).
-    Mais robusto contra bloqueios de IP em ambientes Cloud.
+    Obtém cotações utilizando APIs abertas globais (OpenExchange + CoinGecko).
+    Estratégia híbrida para máxima disponibilidade (Anti-Fail).
     """
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    
+    # Valores de segurança (Fallback) para NUNCA exibir R$ 0.00
+    market_data = {
+        "USD": 6.15,
+        "EUR": 6.45,
+        "GBP": 7.55,
+        "BTC": 580000.00,
+        "status": "offline" # Assume offline até provar o contrário
+    }
+    
     try:
-        # Utiliza o método fast_info do yfinance para maior performance
-        # BRL=X: Dólar/Real | EURBRL=X: Euro/Real | GBPBRL=X: Libra/Real | BTC-BRL: Bitcoin/Real
-        usd = yf.Ticker("BRL=X").fast_info['last_price']
-        eur = yf.Ticker("EURBRL=X").fast_info['last_price']
-        gbp = yf.Ticker("GBPBRL=X").fast_info['last_price']
-        btc = yf.Ticker("BTC-BRL").fast_info['last_price']
-        
-        # Validação simples para garantir que recebemos números
-        if not all(isinstance(x, (int, float)) for x in [usd, eur, gbp, btc]):
-            raise ValueError("Dados de cotação inválidos")
+        # 1. Busca Dados Fiat (Dólar, Euro, Libra) via Open Exchange Rates
+        # Essa API é extremamente estável e não requer chave.
+        resp_fiat = requests.get("https://open.er-api.com/v6/latest/USD", headers=headers, timeout=4)
+        if resp_fiat.status_code == 200:
+            rates = resp_fiat.json().get('rates', {})
+            # Cálculo de taxas cruzadas (Cross-Rates)
+            brl_rate = rates.get('BRL', 6.0)
+            eur_rate = rates.get('EUR', 0.9)
+            gbp_rate = rates.get('GBP', 0.78)
+            
+            market_data["USD"] = float(brl_rate)
+            market_data["EUR"] = float(brl_rate / eur_rate) # Valor do Euro em Reais
+            market_data["GBP"] = float(brl_rate / gbp_rate) # Valor da Libra em Reais
+            market_data["status"] = "online"
 
-        return {
-            "USD": float(usd),
-            "EUR": float(eur),
-            "GBP": float(gbp),
-            "BTC": float(btc),
-            "status": "online"
-        }
-    except Exception:
-        # Fallback values em caso de erro na conexão com Yahoo Finance
-        return {"USD": 0.0, "EUR": 0.0, "GBP": 0.0, "BTC": 0.0, "status": "offline"}
+        # 2. Busca Bitcoin via CoinGecko (API Pública de Cripto)
+        resp_crypto = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl", headers=headers, timeout=4)
+        if resp_crypto.status_code == 200:
+            btc_val = resp_crypto.json().get('bitcoin', {}).get('brl')
+            if btc_val:
+                market_data["BTC"] = float(btc_val)
+
+    except Exception as e:
+        print(f"Alerta de conexão: {e}")
+        # Em caso de erro total, mantém os valores de fallback definidos no início
+        pass
+        
+    return market_data
 
 # --- PROCESSAMENTO DE LINGUAGEM NATURAL (NLP) ---
 def process_natural_language_input(text, market_data):
