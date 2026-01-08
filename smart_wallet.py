@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 4.0.0 (20-Minute Refresh Cycle)
+Version: Final Stable (Hourly Updates)
 """
 
 import streamlit as st
@@ -38,7 +38,7 @@ def configure_api():
 
 configure_api()
 
-# --- CSS (VISUAL SÓBRIO E PROFISSIONAL) ---
+# --- CSS (VISUAL LIMPO E SÓBRIO) ---
 st.markdown("""
     <style>
     .market-card { 
@@ -55,8 +55,8 @@ st.markdown("""
         color: #FFF;
         margin: 5px 0;
     }
-    .label-coin { font-size: 12px; color: #888; letter-spacing: 1px; text-transform: uppercase; }
-    .status-badge { font-size: 11px; color: #4CAF50; background: rgba(76, 175, 80, 0.1); padding: 2px 6px; border-radius: 4px; }
+    .label-coin { font-size: 12px; color: #888; letter-spacing: 1px; }
+    .update-tag { font-size: 10px; color: #555; margin-top: 5px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -113,16 +113,16 @@ class TransactionDAO:
 
 db_manager = TransactionDAO()
 
-# --- ENGINE FINANCEIRO (BINANCE EM TEMPO REAL) ---
-def fetch_market_data():
+# --- ENGINE FINANCEIRO (ATUALIZAÇÃO POR HORA) ---
+def fetch_hourly_data():
     """
-    Busca o dado mais recente disponível no momento da chamada.
-    Se a pessoa entrar 18:00, pega o dado de 18:00.
+    Busca cotações na Binance (USDT/BTC).
+    Funciona 24/7 (independente de feriados).
+    Retorna None se falhar para manter o cache anterior.
     """
     try:
-        # API Pública da Binance (Sem bloqueio, Dados 24/7)
+        # URL da API Pública da Binance (Sem chave)
         url = "https://api.binance.com/api/v3/ticker/price"
-        # Pares para cálculo cruzado (Dólar, Euro, Libra, Bitcoin)
         params = {"symbols": '["USDTBRL","BTCBRL","EURUSDT","GBPUSDT"]'}
         
         r = requests.get(url, params=params, timeout=5)
@@ -130,22 +130,15 @@ def fetch_market_data():
         
         data = {item['symbol']: float(item['price']) for item in r.json()}
         
-        # 1. Dólar (Base USDT)
+        # Cotação Cruzada (Cross-Rates)
+        # Usamos USDT (Dólar Digital) como base pois ele negocia todo dia
         usd = data.get('USDTBRL', 6.0)
-        
-        # 2. Euro e Libra (Valor em Dólar x Cotação do Dólar)
-        # Isso garante que a cotação seja real e proporcional ao momento
-        eur = data.get('EURUSDT', 0) * usd
-        gbp = data.get('GBPUSDT', 0) * usd
-        
-        # 3. Bitcoin (Direto em Reais)
-        btc = data.get('BTCBRL', 0)
         
         return {
             "USD": usd,
-            "EUR": eur,
-            "GBP": gbp,
-            "BTC": btc,
+            "EUR": data.get('EURUSDT', 0) * usd,
+            "GBP": data.get('GBPUSDT', 0) * usd,
+            "BTC": data.get('BTCBRL', 0),
             "status": "online"
         }
     except Exception:
@@ -175,44 +168,40 @@ def generate_report(df):
         return genai.GenerativeModel('gemini-2.5-flash').generate_content(f"Analise em PT-BR:\n{df.to_string()}").text
     except: return "Erro na análise."
 
-# --- WIDGET DE COTAÇÃO (REFRESH DE 20 MIN) ---
-# run_every=1200 segundos = 20 Minutos
-@st.fragment(run_every=1200)
+# --- WIDGET DE COTAÇÃO (ATUALIZA A CADA 1 HORA) ---
+@st.fragment(run_every=3600) # 3600 segundos = 1 Hora
 def market_widget():
-    # Inicializa ou Mantém Cache
+    # Inicializa cache com valores padrão seguros
     if 'mkt_data' not in st.session_state:
         st.session_state['mkt_data'] = {"USD": 0.0, "EUR": 0.0, "GBP": 0.0, "BTC": 0.0}
     
-    # Busca dados AGORA (Momento exato da execução)
-    new_data = fetch_market_data()
+    # Tenta buscar novos dados
+    new_data = fetch_hourly_data()
     
-    # Se a busca funcionou, atualiza a tela. Se falhou (internet), mantém o último visto.
+    # Se conseguir dados novos, atualiza. Se não, usa o cache (não zera).
     if new_data:
         st.session_state['mkt_data'] = new_data
         
     curr = st.session_state['mkt_data']
     
-    # Hora do Brasil
+    # Horário BRT
     br_time = datetime.now() - timedelta(hours=3)
     
-    # Cabeçalho
+    # Header
     c1, c2 = st.columns([3, 1])
     c1.title("📊 SmartWallet")
     
-    # Indicador de Atualização
-    time_str = br_time.strftime('%H:%M')
-    status_label = "🟢 Atualizado às " + time_str if new_data else "🟠 Última leitura às " + time_str
-    c2.caption(f"{status_label}")
+    status_msg = "🟢 Atualizado" if new_data else "🟠 Cache"
+    c2.caption(f"{status_msg} (1h) | {br_time.strftime('%H:%M')}")
 
-    # Cards de Moedas
+    # Cards
     cols = st.columns(4)
     assets = [("USD", "Dólar"), ("EUR", "Euro"), ("GBP", "Libra"), ("BTC", "Bitcoin")]
     
     for i, (sym, name) in enumerate(assets):
         val = curr.get(sym, 0.0)
         
-        # Formatação limpa (2 casas decimais) para evitar poluição visual
-        # Bitcoin com 0 casas decimais fica mais limpo, mas pus 2 para padronizar
+        # Formatação para 2 casas decimais (menos volátil visualmente)
         fmt = f"R$ {val:,.2f}"
         
         with cols[i]:
@@ -228,7 +217,6 @@ def main():
     market_widget()
     st.divider()
     
-    # Passa os dados para a IA usar nas conversões
     mkt = st.session_state.get('mkt_data', {})
     
     tabs = st.tabs(["🤖 IA Input", "✍️ Manual", "📈 Dashboard", "📋 Extrato", "🧠 Advisor"])
