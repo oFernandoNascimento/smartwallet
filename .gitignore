@@ -1,0 +1,12 @@
+# Ignorar chave de API e segredos
+.streamlit/secrets.toml
+.env
+
+# Ignorar banco de dados (para não expor seus gastos)
+*.db
+smartwallet.db
+financas
+
+# Ignorar arquivos temporários do Python
+__pycache__/
+*.pyc
