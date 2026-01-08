@@ -5,13 +5,12 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.3.5 (Copyright Edition)
+Version: 2.0.0 (Privacy & Session State Edition)
 """
 
 import streamlit as st
 import google.generativeai as genai
 import pandas as pd
-import sqlite3
 import plotly.express as px
 import requests
 import json
@@ -83,63 +82,52 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- CAMADA DE PERSISTÊNCIA (DAO) ---
+# --- CAMADA DE PERSISTÊNCIA (SESSION STATE - PRIVACIDADE) ---
 class TransactionDAO:
-    """Data Access Object para manipulação segura e transacional do SQLite."""
+    """
+    Gerenciador de dados baseado em sessão (RAM).
+    Garante que os dados sejam únicos para cada usuário e zerem ao atualizar a página.
+    """
     
-    def __init__(self, db_path='smartwallet.db'):
-        self.db_path = db_path
-        self._init_schema()
-
-    def _get_connection(self):
-        return sqlite3.connect(self.db_path)
-
-    def _init_schema(self):
-        """Inicializa o esquema do banco de dados com tratamento de exceção."""
-        conn = None
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS transactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date TEXT NOT NULL,
-                    amount REAL NOT NULL,
-                    category TEXT,
-                    description TEXT,
-                    type TEXT
-                )
-            ''')
-            conn.commit()
-        except sqlite3.Error as e:
-            st.error(f"Erro crítico de I/O no banco de dados: {e}")
-        finally:
-            if conn: conn.close()
+    def __init__(self):
+        # Inicializa a lista de transações na sessão se não existir
+        if 'transactions' not in st.session_state:
+            st.session_state['transactions'] = []
 
     def insert_transaction(self, date, amount, category, description, type_):
-        conn = None
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO transactions (date, amount, category, description, type) 
-                VALUES (?, ?, ?, ?, ?)''', (date, amount, category, description, type_))
-            conn.commit()
+            # Cria um dicionário com os dados da transação
+            new_transaction = {
+                'id': len(st.session_state['transactions']) + 1,
+                'date': str(date),
+                'amount': float(amount),
+                'category': category,
+                'description': description,
+                'type': type_
+            }
+            # Adiciona à lista na memória
+            st.session_state['transactions'].append(new_transaction)
             return True
         except Exception:
             return False
-        finally:
-            if conn: conn.close()
 
     def fetch_all(self):
-        conn = None
         try:
-            conn = self._get_connection()
-            return pd.read_sql_query("SELECT * FROM transactions ORDER BY date DESC, id DESC", conn)
+            data = st.session_state['transactions']
+            if not data:
+                return pd.DataFrame(columns=['id', 'date', 'amount', 'category', 'description', 'type'])
+            
+            # Converte a lista de dicionários para DataFrame
+            df = pd.DataFrame(data)
+            # Garante a ordenação (mais recente primeiro)
+            df = df.sort_values(by=['date', 'id'], ascending=[False, False])
+            return df
         except Exception:
             return pd.DataFrame()
-        finally:
-            if conn: conn.close()
+            
+    def clear_data(self):
+        """Limpa os dados da sessão atual"""
+        st.session_state['transactions'] = []
 
 # Instância Global do Gerenciador de Banco de Dados
 db_manager = TransactionDAO()
@@ -417,10 +405,9 @@ def main():
 
             st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
             
-            if st.button("Reiniciar Banco de Dados"):
+            if st.button("Reiniciar Sessão (Limpar Dados)"):
                 try:
-                    import os
-                    if os.path.exists("smartwallet.db"): os.remove("smartwallet.db")
+                    db_manager.clear_data()
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao reiniciar: {e}")
