@@ -3,4 +3,3 @@ google-generativeai
 pandas
 plotly
 requests
-yfinance
