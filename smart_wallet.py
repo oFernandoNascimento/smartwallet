@@ -1,4 +1,3 @@
-
 """
 SmartWallet Portfolio
 Sistema de Gestão Financeira Inteligente com Processamento de Linguagem Natural (NLP).
@@ -6,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.1.0 (Live Fix)
+Version: 1.0.0
 """
 
 import streamlit as st
@@ -38,15 +37,13 @@ def configure_api():
         # Tenta recuperar a chave dos segredos do ambiente (Melhor Prática de Segurança)
         api_key = st.secrets.get("GEMINI_KEY")
         if not api_key:
-            # Retorna False silenciosamente se não achar, para não quebrar a UI
-            return False
+            raise ValueError("Chave de API não detectada nos segredos do ambiente.")
         genai.configure(api_key=api_key)
-        return True
     except Exception as e:
         st.error(f"Erro de Configuração de Ambiente: {e}")
         st.stop()
 
-api_status = configure_api()
+configure_api()
 
 # --- ESTILIZAÇÃO CSS (INTERFACE MODERNA) ---
 st.markdown("""
@@ -147,21 +144,14 @@ class TransactionDAO:
 # Instância Global do Gerenciador de Banco de Dados
 db_manager = TransactionDAO()
 
-# --- SERVIÇO DE DADOS DE MERCADO (CORRIGIDO) ---
-# Cache de 5 segundos evita bloqueio, mas permite atualização rápida
-@st.cache_data(ttl=5, show_spinner=False)
+# --- SERVIÇO DE DADOS DE MERCADO ---
 def fetch_market_data():
     """
     Obtém cotações em tempo real via API pública.
-    Inclui HEADERS para evitar erro 403 (Offline).
+    Inclui timeout para evitar latência na interface.
     """
-    # Header essencial para funcionar na nuvem
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-    
     try:
-        response = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL", headers=headers, timeout=2)
+        response = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL", timeout=2)
         response.raise_for_status()
         data = response.json()
         return {
@@ -181,9 +171,6 @@ def process_natural_language_input(text, market_data):
     Pipeline de processamento de texto livre utilizando modelo generativo.
     Implementa estratégia de fallback de modelos para alta disponibilidade.
     """
-    if not api_status:
-        return {"error": "Chave de API não configurada. Verifique o secrets.toml."}
-
     prompt = f"""
     Role: Financial Data Parser.
     Context Date: {datetime.now().strftime('%Y-%m-%d')}
@@ -201,8 +188,7 @@ def process_natural_language_input(text, market_data):
     """
     
     # Ordem de prioridade de modelos (Performance > Compatibilidade)
-    # Trocado 'gemini-2.5-flash' por 'gemini-pro' como primário para evitar erros de versão
-    models = ['gemini-pro', 'gemini-1.5-flash']
+    models = ['gemini-2.5-flash', 'gemini-pro', 'gemini-1.5-flash']
     
     for model_name in models:
         try:
@@ -226,13 +212,13 @@ def process_natural_language_input(text, market_data):
 def generate_financial_report(df):
     """Gera análise qualitativa executiva baseada no histórico de transações."""
     if df.empty: return "Dados insuficientes para análise."
-    if not api_status: return "API não configurada."
     
     try:
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
         Analyst Role: Senior Financial Advisor.
         Data Context: \n{df.to_string()}\n
+        
         Objective: Provide a formal, rational, and actionable financial assessment using Portuguese.
         Structure:
         1. Diagnóstico de Saúde Financeira.
@@ -243,8 +229,8 @@ def generate_financial_report(df):
     except Exception:
         return "Serviço de análise indisponível temporariamente."
 
-# --- COMPONENTES DE UI (Auto-Update CORRIGIDO) ---
-@st.fragment(run_every=1) # <--- AQUI: ATUALIZA A CADA 1 SEGUNDO
+# --- COMPONENTES DE UI (Auto-Update) ---
+@st.fragment(run_every=10)
 def render_market_ticker():
     """Renderiza o cabeçalho de cotações com atualização automática via Fragmentos."""
     
@@ -253,14 +239,8 @@ def render_market_ticker():
         st.session_state['market_cache'] = fetch_market_data()
     
     previous_data = st.session_state['market_cache']
-    
-    # A função fetch_market_data agora tem cache interno. 
-    # Ela só vai bater na API de 5 em 5 segundos, mas esta função roda a cada 1s.
     current_data = fetch_market_data()
-    
-    # Atualiza o cache da sessão apenas se os dados mudaram
-    if current_data['USD'] != previous_data['USD']:
-        st.session_state['market_cache'] = current_data
+    st.session_state['market_cache'] = current_data
     
     # Layout do Cabeçalho
     c_header, c_meta = st.columns([3, 1])
@@ -268,7 +248,6 @@ def render_market_ticker():
         st.title(f"📊 SmartWallet | {datetime.now().strftime('%d/%m/%Y')}")
     with c_meta:
         status_color = "🟢" if current_data['status'] == "online" else "🔴"
-        # O Relógio agora atualiza em tempo real
         st.caption(f"{status_color} Data Feed: {current_data['status'].upper()} | {datetime.now().strftime('%H:%M:%S')}")
 
     # Grid de Cotações
@@ -284,7 +263,6 @@ def render_market_ticker():
         trend_class = "trend-flat"
         icon = ""
         
-        # Só anima se houver mudança real de valor
         if curr_val > prev_val:
             anim_class = "anim-up"
             trend_class = "trend-up"
