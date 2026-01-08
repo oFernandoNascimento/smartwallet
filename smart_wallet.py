@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.3.0 (Frankfurter Edition)
+Version: 5.0.0 (Binance Live 1-Min)
 """
 
 import streamlit as st
@@ -37,11 +37,12 @@ def configure_api():
         # Tenta recuperar a chave dos segredos do ambiente (Melhor Prática de Segurança)
         api_key = st.secrets.get("GEMINI_KEY")
         if not api_key:
-            raise ValueError("Chave de API não detectada nos segredos do ambiente.")
-        genai.configure(api_key=api_key)
+            # Não para a execução se não tiver chave, apenas avisa (para evitar erro offline)
+            pass
+        else:
+            genai.configure(api_key=api_key)
     except Exception as e:
         st.error(f"Erro de Configuração de Ambiente: {e}")
-        st.stop()
 
 configure_api()
 
@@ -144,140 +145,116 @@ class TransactionDAO:
 # Instância Global do Gerenciador de Banco de Dados
 db_manager = TransactionDAO()
 
-# --- SERVIÇO DE DADOS DE MERCADO ---
+# --- SERVIÇO DE DADOS DE MERCADO (BINANCE API) ---
 def fetch_market_data():
     """
-    Obtém cotações utilizando Frankfurter (Moedas Fiat) e CoinGecko (Cripto).
-    Combinação otimizada para estabilidade em ambientes Cloud.
+    Obtém cotações via Binance (Mercado 24h).
+    Garante variação a cada minuto.
     """
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    # 1. Valores de segurança (Preenchidos para evitar R$ 0.00 em caso de falha total)
-    market_data = {
-        "USD": 6.05,
-        "EUR": 6.35,
-        "GBP": 7.45,
-        "BTC": 580000.00,
-        "status": "offline" 
-    }
-    
     try:
-        # 2. Busca Dados Fiat (Frankfurter API - Banco Central Europeu)
-        # Mais confiável para conexões sem chave de API
-        # USD -> BRL
-        resp_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=3)
-        if resp_usd.status_code == 200:
-            market_data["USD"] = float(resp_usd.json()['rates']['BRL'])
-            market_data["status"] = "online"
-
-        # EUR -> BRL
-        resp_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=3)
-        if resp_eur.status_code == 200:
-            market_data["EUR"] = float(resp_eur.json()['rates']['BRL'])
-
-        # GBP -> BRL
-        resp_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=3)
-        if resp_gbp.status_code == 200:
-            market_data["GBP"] = float(resp_gbp.json()['rates']['BRL'])
-
-        # 3. Busca Bitcoin via CoinGecko (Já validado e funcionando)
-        resp_crypto = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl", headers=headers, timeout=3)
-        if resp_crypto.status_code == 200:
-            btc_val = resp_crypto.json().get('bitcoin', {}).get('brl')
-            if btc_val:
-                market_data["BTC"] = float(btc_val)
-
-    except Exception as e:
-        print(f"Alerta de conexão: {e}")
-        # Mantém os valores de segurança se der erro
-        pass
+        # Usa Binance API Pública (Não requer chave, não bloqueia fácil)
+        # Trazemos USDT (Dólar), BTC, e pares cruzados para Euro/Libra
+        url = "https://api.binance.com/api/v3/ticker/price"
+        params = {"symbols": '["USDTBRL","BTCBRL","EURUSDT","GBPUSDT"]'}
         
-    return market_data
+        response = requests.get(url, params=params, timeout=5)
+        response.raise_for_status()
+        data_list = response.json()
+        
+        # Converte lista para dicionário
+        prices = {item['symbol']: float(item['price']) for item in data_list}
+        
+        # Cálculo das taxas
+        usd_brl = prices.get('USDTBRL', 6.0)
+        
+        return {
+            "USD": usd_brl,
+            "EUR": prices.get('EURUSDT', 0) * usd_brl, # Cruzamento Euro -> Dólar -> Real
+            "GBP": prices.get('GBPUSDT', 0) * usd_brl, # Cruzamento Libra -> Dólar -> Real
+            "BTC": prices.get('BTCBRL', 0),
+            "status": "online"
+        }
+    except Exception:
+        # Valores de SEGURANÇA para não mostrar R$ 0.00 se a internet falhar
+        return {"USD": 6.10, "EUR": 6.45, "GBP": 7.55, "BTC": 580000.00, "status": "offline"}
 
 # --- PROCESSAMENTO DE LINGUAGEM NATURAL (NLP) ---
 def process_natural_language_input(text, market_data):
     """
     Pipeline de processamento de texto livre utilizando modelo generativo.
-    Implementa estratégia de fallback de modelos para alta disponibilidade.
     """
+    # Se der erro no mercado, usa valor padrão para conversão
+    usd_ref = market_data.get('USD', 6.0)
+    
     prompt = f"""
     Role: Financial Data Parser.
     Context Date: {datetime.now().strftime('%Y-%m-%d')}
     User Input: "{text}"
-    Reference Rates: USD={market_data['USD']}, EUR={market_data['EUR']}
+    Reference Rates: USD={usd_ref}
     
     Task:
     1. Identify transaction type ('Receita' or 'Despesa').
     2. Convert foreign currencies to BRL using reference rates.
     3. Format description in formal Portuguese (Capitalized).
-    4. If conversion occurs, append "(Orig: CURRENCY VALUE)" to description.
     
     Output Format (JSON Only):
     {{ "amount": float, "category": "string", "date": "YYYY-MM-DD", "description": "string", "type": "Receita" or "Despesa" }}
     """
     
-    # Ordem de prioridade de modelos (Performance > Compatibilidade)
     models = ['gemini-2.5-flash', 'gemini-pro', 'gemini-1.5-flash']
     
     for model_name in models:
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
-            
-            # Sanitização da resposta JSON (Remoção de Markdown)
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
             
             if match:
                 payload = json.loads(match.group(0))
-                # Validação de integridade do payload
                 if all(k in payload for k in ('amount', 'category', 'type')):
                     return payload
         except Exception:
-            continue # Failover silencioso para o próximo modelo
+            continue
             
     return {"error": "Não foi possível processar a solicitação no momento."}
 
 def generate_financial_report(df):
-    """Gera análise qualitativa executiva baseada no histórico de transações."""
     if df.empty: return "Dados insuficientes para análise."
-    
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = f"""
-        Analyst Role: Senior Financial Advisor.
-        Data Context: \n{df.to_string()}\n
-        
-        Objective: Provide a formal, rational, and actionable financial assessment using Portuguese.
-        Structure:
-        1. Diagnóstico de Saúde Financeira.
-        2. Identificação de Gargalos.
-        3. Plano de Ação (3 pontos estratégicos).
-        """
+        prompt = f"Analyst Role: Senior Financial Advisor.\nData Context: \n{df.to_string()}\nObjective: Provide a formal, rational, and actionable financial assessment using Portuguese."
         return model.generate_content(prompt).text
     except Exception:
         return "Serviço de análise indisponível temporariamente."
 
-# --- COMPONENTES DE UI (Auto-Update) ---
-@st.fragment(run_every=10)
+# --- COMPONENTES DE UI (Auto-Update: 60 segundos) ---
+@st.fragment(run_every=60)
 def render_market_ticker():
-    """Renderiza o cabeçalho de cotações com atualização automática via Fragmentos."""
+    """Renderiza o cabeçalho de cotações com atualização a cada 1 MINUTO."""
     
-    # Persistência de estado para cálculo de tendência
+    # Inicializa o cache se não existir
     if 'market_cache' not in st.session_state:
         st.session_state['market_cache'] = fetch_market_data()
     
     previous_data = st.session_state['market_cache']
+    
+    # Busca novos dados
     current_data = fetch_market_data()
-    st.session_state['market_cache'] = current_data
+    
+    # Se a busca falhou (veio offline), mantém o dado anterior para não mostrar zero
+    if current_data['status'] == 'offline' and previous_data['USD'] > 0:
+        current_data = previous_data
+    else:
+        st.session_state['market_cache'] = current_data
     
     # Layout do Cabeçalho
     c_header, c_meta = st.columns([3, 1])
     with c_header:
         st.title(f"📊 SmartWallet | {datetime.now().strftime('%d/%m/%Y')}")
     with c_meta:
-        status_color = "🟢" if current_data['status'] == "online" else "🔴"
-        st.caption(f"{status_color} Data Feed: {current_data['status'].upper()} | {datetime.now().strftime('%H:%M:%S')}")
+        status_color = "🟢" if current_data.get('status') == "online" else "🟠"
+        st.caption(f"{status_color} Atualização: 60s | {datetime.now().strftime('%H:%M')}")
 
     # Grid de Cotações
     cols = st.columns(4)
@@ -287,19 +264,20 @@ def render_market_ticker():
         curr_val = current_data.get(symbol, 0)
         prev_val = previous_data.get(symbol, 0)
         
-        # Lógica de Animação CSS baseada na variação de preço
         anim_class = ""
         trend_class = "trend-flat"
         icon = ""
         
-        if curr_val > prev_val:
-            anim_class = "anim-up"
-            trend_class = "trend-up"
-            icon = "▲"
-        elif curr_val < prev_val:
-            anim_class = "anim-down"
-            trend_class = "trend-down"
-            icon = "▼"
+        # Só anima se houver diferença real
+        if abs(curr_val - prev_val) > 0.0001:
+            if curr_val > prev_val:
+                anim_class = "anim-up"
+                trend_class = "trend-up"
+                icon = "▲"
+            else:
+                anim_class = "anim-down"
+                trend_class = "trend-down"
+                icon = "▼"
             
         with cols[idx]:
             st.markdown(f"""
