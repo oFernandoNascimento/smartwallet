@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.3.4 (Investments & Crypto Qty Edition)
+Version: 1.3.5 (Copyright Edition)
 """
 
 import streamlit as st
@@ -305,7 +305,7 @@ def main():
 
     current_market = st.session_state.get('market_cache', fetch_market_data())
 
-    # Adicionei "Investimentos" na lista de abas
+    # Abas Principais
     tabs = st.tabs(["🤖 Input Inteligente", "✍️ Registro Manual", "📈 Analytics", "💰 Investimentos", "📑 Extrato", "🧠 Consultoria"])
 
     # 1. INPUT NLP
@@ -334,7 +334,6 @@ def main():
         col_type, col_val = st.columns([1, 2])
         trans_type = col_type.radio("Tipo:", ["Receita", "Despesa"], horizontal=True)
         
-        # Adicionei Investimentos nas opções de Despesa/Receita para ficar compatível
         categories = ["Salário", "Investimentos", "Outros"] if trans_type == "Receita" else \
                      ["Alimentação", "Moradia", "Transporte", "Lazer", "Educação", "Saúde", "Investimentos", "Serviços", "Outros"]
         
@@ -378,21 +377,18 @@ def main():
         else:
             st.warning("Aguardando dados para gerar visualizações.")
 
-    # 4. INVESTIMENTOS (NOVA ABA SIMPLES)
+    # 4. INVESTIMENTOS
     with tabs[3]:
         st.subheader("Carteira de Investimentos")
         df = db_manager.fetch_all()
         
         if not df.empty:
-            # Filtra apenas a categoria Investimentos
             invest_df = df[df['category'].isin(['Investimentos', 'Investimento'])]
             
             if not invest_df.empty:
-                # Soma Total
                 total_invested = invest_df['amount'].sum()
                 st.metric("Total Investido", f"R$ {total_invested:,.2f}")
                 
-                # Agrupa por Descrição (Nome do ativo) e soma os valores
                 grouped_invest = invest_df.groupby('description')['amount'].sum().reset_index().sort_values(by='amount', ascending=False)
                 grouped_invest.columns = ['Ativo / Descrição', 'Valor Total (R$)']
                 
@@ -441,6 +437,17 @@ def main():
                     st.markdown(report)
             else:
                 st.warning("É necessário histórico financeiro para esta análise.")
+    
+    # --- RODAPÉ DE COPYRIGHT ---
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #666; font-size: 12px; margin-top: 20px;'>
+            © 2026 SmartWallet Portfolio. Developed by Fernando Teixeira do Nascimento. All rights reserved.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 if __name__ == "__main__":
     main()
