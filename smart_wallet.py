@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.3.0 (Frankfurter Edition)
+Version: 1.3.1 (Stable Edition)
 """
 
 import streamlit as st
@@ -147,7 +147,7 @@ db_manager = TransactionDAO()
 # --- SERVIÇO DE DADOS DE MERCADO ---
 def fetch_market_data():
     """
-    Obtém cotações utilizando Frankfurter (Moedas Fiat) e CoinGecko (Cripto).
+    Obtém cotações utilizando Frankfurter (Moedas Fiat) e Binance (Cripto).
     Combinação otimizada para estabilidade em ambientes Cloud.
     """
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -157,7 +157,7 @@ def fetch_market_data():
         "USD": 6.05,
         "EUR": 6.35,
         "GBP": 7.45,
-        "BTC": 580000.00,
+        "BTC": 540000.00, # Ajustado para um valor base mais realista
         "status": "offline" 
     }
     
@@ -180,10 +180,11 @@ def fetch_market_data():
         if resp_gbp.status_code == 200:
             market_data["GBP"] = float(resp_gbp.json()['rates']['BRL'])
 
-        # 3. Busca Bitcoin via CoinGecko (Já validado e funcionando)
-        resp_crypto = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl", headers=headers, timeout=3)
+        # 3. Busca Bitcoin via Binance API (Mais estável e rápido que CoinGecko)
+        # Endpoint público da Binance não requer chave para ticker simples
+        resp_crypto = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL", headers=headers, timeout=3)
         if resp_crypto.status_code == 200:
-            btc_val = resp_crypto.json().get('bitcoin', {}).get('brl')
+            btc_val = resp_crypto.json().get('price')
             if btc_val:
                 market_data["BTC"] = float(btc_val)
 
@@ -274,6 +275,7 @@ def render_market_ticker():
     # Layout do Cabeçalho
     c_header, c_meta = st.columns([3, 1])
     with c_header:
+        # A data aqui será atualizada automaticamente a cada 10s ou reload
         st.title(f"📊 SmartWallet | {datetime.now().strftime('%d/%m/%Y')}")
     with c_meta:
         status_color = "🟢" if current_data['status'] == "online" else "🔴"
