@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.0.0
+Version: 1.3.0 (Frankfurter Edition)
 """
 
 import streamlit as st
@@ -147,23 +147,52 @@ db_manager = TransactionDAO()
 # --- SERVIÇO DE DADOS DE MERCADO ---
 def fetch_market_data():
     """
-    Obtém cotações em tempo real via API pública.
-    Inclui timeout para evitar latência na interface.
+    Obtém cotações utilizando Frankfurter (Moedas Fiat) e CoinGecko (Cripto).
+    Combinação otimizada para estabilidade em ambientes Cloud.
     """
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    # 1. Valores de segurança (Preenchidos para evitar R$ 0.00 em caso de falha total)
+    market_data = {
+        "USD": 6.05,
+        "EUR": 6.35,
+        "GBP": 7.45,
+        "BTC": 580000.00,
+        "status": "offline" 
+    }
+    
     try:
-        response = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL", timeout=2)
-        response.raise_for_status()
-        data = response.json()
-        return {
-            "USD": float(data['USDBRL']['bid']),
-            "EUR": float(data['EURBRL']['bid']),
-            "GBP": float(data['GBPBRL']['bid']),
-            "BTC": float(data['BTCBRL']['bid']),
-            "status": "online"
-        }
-    except Exception:
-        # Fallback values em caso de indisponibilidade da API
-        return {"USD": 0.0, "EUR": 0.0, "GBP": 0.0, "BTC": 0.0, "status": "offline"}
+        # 2. Busca Dados Fiat (Frankfurter API - Banco Central Europeu)
+        # Mais confiável para conexões sem chave de API
+        # USD -> BRL
+        resp_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=3)
+        if resp_usd.status_code == 200:
+            market_data["USD"] = float(resp_usd.json()['rates']['BRL'])
+            market_data["status"] = "online"
+
+        # EUR -> BRL
+        resp_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=3)
+        if resp_eur.status_code == 200:
+            market_data["EUR"] = float(resp_eur.json()['rates']['BRL'])
+
+        # GBP -> BRL
+        resp_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=3)
+        if resp_gbp.status_code == 200:
+            market_data["GBP"] = float(resp_gbp.json()['rates']['BRL'])
+
+        # 3. Busca Bitcoin via CoinGecko (Já validado e funcionando)
+        resp_crypto = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl", headers=headers, timeout=3)
+        if resp_crypto.status_code == 200:
+            btc_val = resp_crypto.json().get('bitcoin', {}).get('brl')
+            if btc_val:
+                market_data["BTC"] = float(btc_val)
+
+    except Exception as e:
+        print(f"Alerta de conexão: {e}")
+        # Mantém os valores de segurança se der erro
+        pass
+        
+    return market_data
 
 # --- PROCESSAMENTO DE LINGUAGEM NATURAL (NLP) ---
 def process_natural_language_input(text, market_data):
@@ -293,13 +322,13 @@ def main():
 
     # 1. INPUT NLP
     with tabs[0]:
-        st.markdown("#### Registro via Linguagem Natural")
+        st.markdown("#### 🗣️ Diga para a IA o que você gastou ou recebeu")
         with st.form("nlp_form", clear_on_submit=True):
-            user_input = st.text_input("Descreva a transação:", placeholder="Ex: Recebi 4500 de salário ou Gastei 120 no restaurante")
-            submitted = st.form_submit_button("Processar Registro")
+            user_input = st.text_input("Descreva sua movimentação:", placeholder="Ex: Gastei 120 reais no restaurante japonês ou Recebi 500 de um freela")
+            submitted = st.form_submit_button("Processar via Inteligência Artificial")
         
         if submitted and user_input:
-            with st.spinner("Processando..."):
+            with st.spinner("A IA está analisando sua transação..."):
                 result = process_natural_language_input(user_input, current_market)
                 if "error" in result:
                     st.error(result["error"])
@@ -309,7 +338,7 @@ def main():
                     )
                     if saved:
                         msg_type = "Receita" if result['type'] == 'Receita' else "Despesa"
-                        st.success(f"{msg_type} registrada: R$ {result['amount']:.2f} ({result['description']})")
+                        st.success(f"{msg_type} identificada: R$ {result['amount']:.2f} ({result['description']})")
 
     # 2. INPUT MANUAL
     with tabs[1]:
