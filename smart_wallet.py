@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 2.0.0 (Privacy & Session State Edition)
+Version: 2.1.0 (Improved UX Edition)
 """
 
 import streamlit as st
@@ -300,7 +300,11 @@ def main():
     with tabs[0]:
         st.markdown("#### 🗣️ Diga para a IA o que você gastou ou recebeu")
         with st.form("nlp_form", clear_on_submit=True):
-            user_input = st.text_input("Descreva sua movimentação:", placeholder="Ex: Comprei 1500 reais em Bitcoin")
+            # AQUI ESTÁ A MUDANÇA NO PLACEHOLDER
+            user_input = st.text_input(
+                "Descreva sua movimentação:", 
+                placeholder="Ex: Gastei 20 na farmácia, Recebi 1500 de salário ou Comprei 1500 reais em Bitcoin"
+            )
             submitted = st.form_submit_button("Processar via Inteligência Artificial")
         
         if submitted and user_input:
