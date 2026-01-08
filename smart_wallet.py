@@ -7,22 +7,35 @@ import sqlite3
 import requests
 
 # =========================================================
-# CONFIGURAÇÃO INICIAL E CSS
+# CONFIGURAÇÃO INICIAL E CSS (VISUAL NOVO)
 # =========================================================
 st.set_page_config(page_title="SmartWallet AI", page_icon="qh", layout="wide")
 
 st.markdown("""
     <style>
     .main {background-color: #0E1117;}
+    
+    /* Card padrão mais limpo */
     .metric-card {
         background-color: #1E1E1E;
         padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #333;
+        border-radius: 12px;
+        border: 1px solid #333; /* Borda padrão discreta */
         text-align: center;
+        transition: transform 0.2s;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    .metric-value {font-size: 24px; font-weight: bold; color: #FFFFFF;}
-    .metric-label {font-size: 12px; color: #888; text-transform: uppercase;}
+    
+    .metric-card:hover {transform: translateY(-2px);}
+    
+    .metric-value {font-size: 26px; font-weight: bold; color: #FFFFFF; margin: 5px 0;}
+    .metric-label {font-size: 13px; color: #aaa; text-transform: uppercase; letter-spacing: 1px;}
+    .variation {font-size: 12px; font-weight: bold;}
+    
+    /* Cores de Tendência (Glow suave) */
+    .up {border-color: rgba(76, 175, 80, 0.5) !important; box-shadow: 0 0 10px rgba(76, 175, 80, 0.2);}
+    .down {border-color: rgba(255, 82, 82, 0.5) !important; box-shadow: 0 0 10px rgba(255, 82, 82, 0.2);}
+    
     .stTextInput > div > div > input {background-color: #262730; color: white;}
     </style>
 """, unsafe_allow_html=True)
@@ -64,58 +77,48 @@ init_db()
 # 2. SISTEMA DE COTAÇÕES COM DISFARCE (ANTI-BLOQUEIO)
 # =========================================================
 def get_cotacoes():
-    # DISFARCE: Fingir ser um navegador comum para evitar bloqueio
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
     
     fallback = {
-        'USDBRL': {'bid': '6.15'},
-        'EURBRL': {'bid': '6.50'},
-        'GBPBRL': {'bid': '7.80'},
-        'BTCBRL': {'bid': '580000'}
+        'USDBRL': {'bid': '6.15', 'pctChange': '0.00'},
+        'EURBRL': {'bid': '6.50', 'pctChange': '0.00'},
+        'GBPBRL': {'bid': '7.80', 'pctChange': '0.00'},
+        'BTCBRL': {'bid': '580000', 'pctChange': '0.00'}
     }
 
-    # TENTATIVA 1: AwesomeAPI (Com headers de navegador)
     try:
         url = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL"
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
-            return response.json(), True # Sucesso Total
+            return response.json(), True 
     except:
-        pass # Se falhar, tenta o próximo
+        pass
 
-    # TENTATIVA 2: Frankfurter API (Backup Internacional)
-    # Nota: Essa API é mais amigável com servidores Cloud
     try:
         url2 = "https://api.frankfurter.app/latest?from=USD&to=BRL"
         r2 = requests.get(url2, headers=headers, timeout=5)
         if r2.status_code == 200:
             usd_val = r2.json()['rates']['BRL']
-            # Reconstrói o formato para compatibilidade
             fake_json = fallback.copy()
             fake_json['USDBRL']['bid'] = str(usd_val)
-            # (As outras moedas ficariam fixas neste backup parcial)
             return fake_json, True 
     except:
         pass
 
-    return fallback, False # Desiste e usa fixo
+    return fallback, False
 
 rates, status_api = get_cotacoes()
 
-# Função segura de conversão
 def converter_moeda(valor, moeda):
     moeda = moeda.upper()
-    if moeda == "BRL":
-        return float(valor)
-    
+    if moeda == "BRL": return float(valor)
     mapa = {'USD': 'USDBRL', 'EUR': 'EURBRL', 'GBP': 'GBPBRL', 'BTC': 'BTCBRL'}
     if moeda in mapa:
         chave = mapa[moeda]
         try:
-            cotacao = float(rates[chave]['bid'])
-            return float(valor) * cotacao
+            return float(valor) * float(rates[chave]['bid'])
         except:
             return float(valor)
     return float(valor)
@@ -154,31 +157,49 @@ def processar_texto_ia(texto):
         return None
 
 # =========================================================
-# 4. INTERFACE DO DASHBOARD
+# 4. INTERFACE (DASHBOARD COM CORES DINÂMICAS)
 # =========================================================
 st.title("📊 SmartWallet | 2026")
 
-# --- BARRA DE COTAÇÕES ---
+# --- BARRA DE COTAÇÕES INTELIGENTE ---
 cols = st.columns(4)
 nomes = {"USDBRL": "Dólar (USD)", "EURBRL": "Euro (EUR)", "GBPBRL": "Libra (GBP)", "BTCBRL": "Bitcoin (BTC)"}
 simbolos = {"USDBRL": "USDBRL", "EURBRL": "EURBRL", "GBPBRL": "GBPBRL", "BTCBRL": "BTCBRL"}
 
 for i, (key, label) in enumerate(nomes.items()):
-    val = float(rates[simbolos[key]]['bid'])
-    # Se estiver online (True), fica verde. Se caiu para backup (False), laranja.
-    cor = "#00ff00" if status_api else "#ffa500" 
+    # Pega os dados
+    dados_moeda = rates.get(simbolos[key], {})
+    val = float(dados_moeda.get('bid', 0))
+    var = float(dados_moeda.get('pctChange', 0))
+    
+    # Lógica das Cores (Verde se subiu, Vermelho se caiu)
+    if var > 0:
+        classe_css = "up"
+        sinal = "▲"
+        cor_texto = "#4CAF50" # Verde
+    elif var < 0:
+        classe_css = "down"
+        sinal = "▼"
+        cor_texto = "#FF5252" # Vermelho
+    else:
+        classe_css = ""
+        sinal = "▬"
+        cor_texto = "#888"
+
     with cols[i]:
         st.markdown(f"""
-        <div class="metric-card" style="border-color: {cor};">
+        <div class="metric-card {classe_css}">
             <div class="metric-label">{label}</div>
             <div class="metric-value">R$ {val:.2f}</div>
+            <div class="variation" style="color: {cor_texto};">
+                {sinal} {var:.2f}%
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
+# Status discreto no rodapé das cotações
 if not status_api:
-    st.caption("⚠️ Modo Offline (Backup Ativo): Servidor de cotações bloqueou a conexão.")
-else:
-    st.caption("🟢 Data Feed: AO VIVO (Conexão Segura)")
+    st.caption("⚠️ Offline: Cotações aproximadas.")
 
 st.markdown("---")
 
@@ -214,7 +235,7 @@ with abas[0]:
                     st.balloons()
                     import time
                     time.sleep(1)
-                    st.rerun() # Atualiza a tela automaticamente
+                    st.rerun()
                 else:
                     st.warning("Não entendi a transação. Tente ser mais claro.")
 
