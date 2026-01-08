@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 1.5.0 (High-Frequency Demo)
+Version: 1.6.0 (Real-Time Production Grade)
 """
 
 import streamlit as st
@@ -17,8 +17,7 @@ import requests
 import json
 import re
 import time
-import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- CONFIGURAÇÃO DO AMBIENTE E LAYOUT ---
 st.set_page_config(
@@ -28,34 +27,28 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- GERENCIAMENTO DE CREDENCIAIS E SEGURANÇA ---
+# --- GERENCIAMENTO DE CREDENCIAIS ---
 def configure_api():
     try:
         api_key = st.secrets.get("GEMINI_KEY")
-        if not api_key:
-            # Fallback seguro para evitar crash se a chave não estiver configurada
-            # Em produção, isso deve levantar um erro ou aviso
-            pass 
-        else:
+        if api_key:
             genai.configure(api_key=api_key)
-    except Exception as e:
-        st.error(f"Erro de Configuração: {e}")
+    except Exception:
+        pass
 
 configure_api()
 
-# --- ESTILIZAÇÃO CSS (INTERFACE MODERNA & VIVA) ---
+# --- ESTILIZAÇÃO CSS (VISUAL PREMIUM) ---
 st.markdown("""
     <style>
-    /* Animações de Pulso para indicar atividade */
-    @keyframes pulse-green {
-        0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
-        70% { transform: scale(1.02); box-shadow: 0 0 0 5px rgba(76, 175, 80, 0); }
-        100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+    /* Animações Sutis */
+    @keyframes highlight-green {
+        0% { background-color: rgba(76, 175, 80, 0.3); }
+        100% { background-color: #0E1117; }
     }
-    @keyframes pulse-red {
-        0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7); }
-        70% { transform: scale(1.02); box-shadow: 0 0 0 5px rgba(244, 67, 54, 0); }
-        100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(244, 67, 54, 0); }
+    @keyframes highlight-red {
+        0% { background-color: rgba(244, 67, 54, 0.3); }
+        100% { background-color: #0E1117; }
     }
 
     .market-card { 
@@ -64,18 +57,18 @@ st.markdown("""
         border-radius: 10px; 
         padding: 15px; 
         text-align: center;
-        transition: all 0.3s ease;
+        transition: transform 0.2s;
     }
+    .market-card:hover { transform: scale(1.02); border-color: #555; }
     
-    .anim-up { animation: pulse-green 1s infinite; border-color: #4CAF50; }
-    .anim-down { animation: pulse-red 1s infinite; border-color: #F44336; }
+    .anim-up { animation: highlight-green 1s ease-out; border-color: #4CAF50; }
+    .anim-down { animation: highlight-red 1s ease-out; border-color: #F44336; }
     
-    .label-coin { font-size: 12px; color: #aaa; font-weight: bold; letter-spacing: 1px; margin-bottom: 5px; }
-    /* Fonte monoespaçada para os números não "pularem" de lugar */
-    .value-coin { font-size: 24px; font-weight: 700; font-family: 'Courier New', monospace; }
+    .label-coin { font-size: 12px; color: #aaa; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
+    .value-coin { font-size: 26px; font-weight: 700; font-family: 'Consolas', 'Courier New', monospace; }
     
-    .trend-up { color: #4CAF50; text-shadow: 0 0 10px rgba(76, 175, 80, 0.3); }
-    .trend-down { color: #F44336; text-shadow: 0 0 10px rgba(244, 67, 54, 0.3); }
+    .trend-up { color: #4CAF50; }
+    .trend-down { color: #F44336; }
     
     div[data-testid="stMetricValue"] { font-size: 24px; }
     </style>
@@ -138,52 +131,67 @@ class TransactionDAO:
 
 db_manager = TransactionDAO()
 
-# --- ENGINE DE DADOS (BINANCE + VOLATILIDADE SIMULADA) ---
+# --- MOTOR DE COTAÇÃO HÍBRIDO (REDUNDÂNCIA DUPLA) ---
 def fetch_market_data():
     """
-    Busca dados na Binance e aplica 'Jitter' (micro-variação) se o mercado estiver parado.
-    Isso garante que a UI sempre mostre atualização a cada 5 segundos.
+    Tenta AwesomeAPI (Melhor para Fiat).
+    Se falhar, usa Binance (Melhor para Estabilidade).
+    SEM DADOS SIMULADOS. Apenas dados reais.
     """
+    
+    # 1. TENTATIVA PRINCIPAL: AwesomeAPI (Oficial)
     try:
-        # 1. Busca Real da API
-        url = "https://api.binance.com/api/v3/ticker/price"
-        params = {"symbols": '["BTCBRL","USDTBRL"]'}
-        response = requests.get(url, params=params, timeout=2)
-        data = response.json()
-        
-        prices = {item['symbol']: float(item['price']) for item in data}
-        usd_base = prices.get('USDTBRL', 6.0)
-        btc_base = prices.get('BTCBRL', 0.0)
-
-        # 2. Aplica Micro-Variação (Jitter) para Efeito Visual
-        # Adiciona ou subtrai entre 0.0001% e 0.0005% aleatoriamente
-        def add_jitter(value):
-            variation = value * random.uniform(-0.0005, 0.0005)
-            return value + variation
-
-        # Euro e Libra baseados no Dólar com jitter próprio
-        return {
-            "USD": add_jitter(usd_base),
-            "EUR": add_jitter(usd_base * 1.05),
-            "GBP": add_jitter(usd_base * 1.25),
-            "BTC": add_jitter(btc_base),
-            "status": "online"
-        }
+        headers = {"User-Agent": "Mozilla/5.0"}
+        req = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL", headers=headers, timeout=2)
+        if req.status_code == 200:
+            d = req.json()
+            return {
+                "USD": float(d['USDBRL']['bid']),
+                "EUR": float(d['EURBRL']['bid']),
+                "GBP": float(d['GBPBRL']['bid']),
+                "BTC": float(d['BTCBRL']['bid']),
+                "source": "AwesomeAPI (Oficial)"
+            }
     except Exception:
-        # Fallback randômico para não ficar zerado se a API cair
-        base_usd = 6.10
-        return {
-            "USD": base_usd * random.uniform(0.99, 1.01),
-            "EUR": (base_usd * 1.05) * random.uniform(0.99, 1.01),
-            "GBP": (base_usd * 1.25) * random.uniform(0.99, 1.01),
-            "BTC": 580000.00 * random.uniform(0.99, 1.01),
-            "status": "simulado"
-        }
+        pass # Falhou? Vai para a próxima silenciosamente.
+
+    # 2. TENTATIVA SECUNDÁRIA: Binance (Backup Robusto)
+    try:
+        # Usa USDT como proxy do Dólar
+        url = "https://api.binance.com/api/v3/ticker/price"
+        params = {"symbols": '["USDTBRL","EURBRL","BTCBRL"]'}
+        req = requests.get(url, params=params, timeout=3)
+        if req.status_code == 200:
+            data = req.json()
+            prices = {item['symbol']: float(item['price']) for item in data}
+            
+            usd = prices.get('USDTBRL', 0)
+            eur = prices.get('EURBRL', 0)
+            btc = prices.get('BTCBRL', 0)
+            
+            # Libra (GBP) aproximada via paridade (GBP geralmente é 1.25x USD)
+            # Binance nem sempre tem GBP/BRL direto, então calculamos para não ficar zero
+            gbp = usd * 1.25 
+            
+            return {
+                "USD": usd,
+                "EUR": eur,
+                "GBP": gbp,
+                "BTC": btc,
+                "source": "Binance Market"
+            }
+    except Exception:
+        pass
+
+    # Se TUDO falhar (sem internet), retorna zeros para indicar erro, 
+    # em vez de inventar números.
+    return {"USD": 0.0, "EUR": 0.0, "GBP": 0.0, "BTC": 0.0, "source": "OFFLINE"}
 
 # --- PROCESSAMENTO NLP ---
 def process_natural_language_input(text, market_data):
     prompt = f"""
-    Role: Financial Parser. Today: {datetime.now().strftime('%Y-%m-%d')}
+    Role: Financial Parser.
+    Context: User is Brazilian. Date: {datetime.now().strftime('%Y-%m-%d')}
     Input: "{text}"
     Rates: USD={market_data['USD']:.2f}
     Output JSON: {{ "amount": float, "category": "str", "date": "YYYY-MM-DD", "description": "str", "type": "Receita"|"Despesa" }}
@@ -206,53 +214,59 @@ def generate_financial_report(df):
         return model.generate_content(f"Analise estas finanças em PT-BR:\n{df.to_string()}").text
     except: return "Erro na análise."
 
-# --- COMPONENTE DE ATUALIZAÇÃO AUTOMÁTICA ---
-@st.fragment(run_every=5) # ATUALIZA A CADA 5 SEGUNDOS
+# --- WIDGET DE COTAÇÃO (AUTO-REFRESH REAL) ---
+@st.fragment(run_every=5)
 def render_market_ticker():
-    # Cache manual para comparar valores anteriores
-    if 'last_prices' not in st.session_state:
-        st.session_state['last_prices'] = fetch_market_data()
+    # Cache manual para detectar variação
+    if 'last_market' not in st.session_state:
+        st.session_state['last_market'] = fetch_market_data()
     
-    prev = st.session_state['last_prices']
+    prev = st.session_state['last_market']
     curr = fetch_market_data()
-    st.session_state['last_prices'] = curr
+    
+    # Atualiza cache apenas se tiver dados válidos
+    if curr["USD"] > 0:
+        st.session_state['last_market'] = curr
+    else:
+        curr = prev # Mantém o último valor conhecido se a API piscar
+
+    # Ajuste de Fuso Horário (BRT = UTC - 3)
+    br_time = datetime.now() - timedelta(hours=3)
     
     # Header
     c1, c2 = st.columns([3, 1])
     with c1: st.title(f"📊 SmartWallet")
     with c2: 
-        # Relógio com segundos para provar que está rodando
-        st.caption(f"⚡ Atualização: {datetime.now().strftime('%H:%M:%S')}")
+        status_color = "🟢" if curr["USD"] > 0 else "🔴"
+        st.caption(f"{status_color} {curr.get('source', 'Connecting...')} | {br_time.strftime('%H:%M:%S')}")
 
     # Cards
     cols = st.columns(4)
     assets = [("USD", "Dólar"), ("EUR", "Euro"), ("GBP", "Libra"), ("BTC", "Bitcoin")]
     
     for idx, (sym, name) in enumerate(assets):
-        val = curr[sym]
-        old = prev[sym]
+        val = curr.get(sym, 0.0)
+        old_val = prev.get(sym, 0.0)
         
-        # Define a cor e animação baseada na mudança
-        delta = val - old
-        if delta > 0:
-            color_cls = "trend-up"
-            anim = "anim-up"
-            arrow = "▲"
-        else:
-            color_cls = "trend-down"
-            anim = "anim-down"
-            arrow = "▼"
+        # Só anima se houver diferença real
+        diff = val - old_val
+        
+        anim_class = ""
+        trend_class = "trend-up" if diff >= 0 else "trend-down"
+        arrow = "▲" if diff >= 0 else "▼"
+        
+        if diff > 0.0001: anim_class = "anim-up"
+        elif diff < -0.0001: anim_class = "anim-down"
             
         with cols[idx]:
-            # Exibe com 4 CASAS DECIMAIS para mostrar a mudança
             st.markdown(f"""
-            <div class="market-card {anim}">
-                <div class="label-coin">{name}</div>
-                <div class="value-coin {color_cls}">
+            <div class="market-card {anim_class}">
+                <div class="label-coin">{name} ({sym})</div>
+                <div class="value-coin {trend_class}">
                     R$ {val:,.4f}
                 </div>
-                <div style="font-size: 10px; color: #666;">
-                    {arrow} {abs(delta):.4f} (5s)
+                <div style="font-size: 11px; opacity: 0.7;">
+                    {arrow} {abs(diff):.4f} (Var)
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -262,13 +276,12 @@ def main():
     render_market_ticker()
     st.divider()
 
-    # Pega dados atuais para o processamento (sem jitter exagerado)
-    current_market = st.session_state.get('last_prices', fetch_market_data())
+    current_market = st.session_state.get('last_market', {"USD": 6.0})
 
     tabs = st.tabs(["🤖 IA Assistant", "📝 Manual", "📊 Dashboard", "📑 Extrato", "🧠 Advisor"])
 
     with tabs[0]:
-        st.markdown("#### 🗣️ Diga para a IA o que aconteceu")
+        st.markdown("#### 🗣️ Diga para a IA o que você gastou ou recebeu")
         with st.form("nlp"):
             txt = st.text_input("Ex: 'Recebi 200 reais' ou 'Gastei 50 no Uber'", key="nlp_input")
             if st.form_submit_button("Processar") and txt:
@@ -286,7 +299,7 @@ def main():
         c_type, c_val = st.columns([1, 2])
         tipo = c_type.radio("Tipo", ["Receita", "Despesa"])
         cats = ["Salário", "Investimento"] if tipo == "Receita" else ["Alimentação", "Transporte", "Casa", "Lazer", "Outros"]
-        val = c_val.number_input("Valor", min_value=0.0)
+        val = c_val.number_input("Valor", min_value=0.0, format="%.2f")
         cat = st.selectbox("Categoria", cats)
         desc = st.text_input("Descrição")
         if st.button("Salvar Manual"):
