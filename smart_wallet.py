@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 2.1.0 (Improved UX Edition)
+Version: 2.2.0 (SQLite Persistence Edition)
 """
 
 import streamlit as st
@@ -16,7 +16,8 @@ import requests
 import json
 import re
 import time
-import pytz  # Acrescentado para fuso horário
+import pytz
+import sqlite3  # Novo import para o Banco de Dados
 from datetime import datetime
 
 # --- CONFIGURAÇÃO GLOBAL DE FUSO HORÁRIO ---
@@ -40,8 +41,11 @@ def configure_api():
         # Tenta recuperar a chave dos segredos do ambiente (Melhor Prática de Segurança)
         api_key = st.secrets.get("GEMINI_KEY")
         if not api_key:
-            raise ValueError("Chave de API não detectada nos segredos do ambiente.")
-        genai.configure(api_key=api_key)
+            # Fallback opcional ou erro
+            # genai.configure(api_key="SUA_KEY_AQUI") # Apenas para teste local sem secrets
+            pass 
+        else:
+            genai.configure(api_key=api_key)
     except Exception as e:
         st.error(f"Erro de Configuração de Ambiente: {e}")
         st.stop()
@@ -86,52 +90,84 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- CAMADA DE PERSISTÊNCIA (SESSION STATE - PRIVACIDADE) ---
+# --- CAMADA DE PERSISTÊNCIA (SQLITE3) ---
 class TransactionDAO:
     """
-    Gerenciador de dados baseado em sessão (RAM).
-    Garante que os dados sejam únicos para cada usuário e zerem ao atualizar a página.
+    Gerenciador de dados persistente usando SQLite.
+    Substitui o armazenamento em sessão para salvar dados permanentemente em arquivo.
     """
     
-    def __init__(self):
-        # Inicializa a lista de transações na sessão se não existir
-        if 'transactions' not in st.session_state:
-            st.session_state['transactions'] = []
+    def __init__(self, db_name="smartwallet.db"):
+        self.db_name = db_name
+        self.init_db()
 
-    def insert_transaction(self, date, amount, category, description, type_):
+    def get_connection(self):
+        """Estabelece conexão com o banco de dados"""
+        return sqlite3.connect(self.db_name, check_same_thread=False)
+
+    def init_db(self):
+        """Cria a tabela de transações se ela não existir"""
         try:
-            # Cria um dicionário com os dados da transação
-            new_transaction = {
-                'id': len(st.session_state['transactions']) + 1,
-                'date': str(date),
-                'amount': float(amount),
-                'category': category,
-                'description': description,
-                'type': type_
-            }
-            # Adiciona à lista na memória
-            st.session_state['transactions'].append(new_transaction)
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS transactions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT,
+                        date TEXT,
+                        amount REAL,
+                        category TEXT,
+                        description TEXT,
+                        type TEXT
+                    )
+                """)
+                conn.commit()
+        except Exception as e:
+            st.error(f"Erro ao inicializar banco de dados: {e}")
+
+    def insert_transaction(self, user_id, date, amount, category, description, type_):
+        """Insere uma nova transação vinculada a um usuário (wallet_id)"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO transactions (user_id, date, amount, category, description, type)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (user_id, str(date), float(amount), category, description, type_))
+                conn.commit()
             return True
         except Exception:
             return False
 
-    def fetch_all(self):
+    def fetch_all(self, user_id):
+        """Busca todas as transações de um usuário específico"""
         try:
-            data = st.session_state['transactions']
-            if not data:
-                return pd.DataFrame(columns=['id', 'date', 'amount', 'category', 'description', 'type'])
+            with self.get_connection() as conn:
+                # Carrega dados filtrando pelo user_id
+                df = pd.read_sql_query(
+                    "SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC, id DESC", 
+                    conn, 
+                    params=(user_id,)
+                )
             
-            # Converte a lista de dicionários para DataFrame
-            df = pd.DataFrame(data)
-            # Garante a ordenação (mais recente primeiro)
-            df = df.sort_values(by=['date', 'id'], ascending=[False, False])
+            # Se o dataframe estiver vazio, retorna estrutura vazia com as colunas corretas
+            if df.empty:
+                return pd.DataFrame(columns=['id', 'user_id', 'date', 'amount', 'category', 'description', 'type'])
+            
             return df
         except Exception:
-            return pd.DataFrame()
+            return pd.DataFrame(columns=['id', 'user_id', 'date', 'amount', 'category', 'description', 'type'])
             
-    def clear_data(self):
-        """Limpa os dados da sessão atual"""
-        st.session_state['transactions'] = []
+    def clear_data(self, user_id):
+        """Remove apenas os dados do usuário atual"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
+                conn.commit()
+            return True
+        except Exception:
+            return False
 
 # Instância Global do Gerenciador de Banco de Dados
 db_manager = TransactionDAO()
@@ -140,7 +176,6 @@ db_manager = TransactionDAO()
 def fetch_market_data():
     """
     Obtém cotações utilizando Frankfurter (Moedas Fiat) e AwesomeAPI (Bitcoin).
-    Ajustado para refletir melhor o mercado BRL.
     """
     headers = {"User-Agent": "Mozilla/5.0"}
     
@@ -184,7 +219,6 @@ def process_natural_language_input(text, market_data):
     """
     Pipeline de processamento de texto livre utilizando modelo generativo.
     """
-    # Prompt ajustado para calcular quantidade de ativos (ex: BTC) e usar data BR
     prompt = f"""
     Role: Financial Data Parser.
     Context Date: {datetime.now(fuso_br).strftime('%Y-%m-%d')}
@@ -257,11 +291,9 @@ def render_market_ticker():
     
     c_header, c_meta = st.columns([3, 1])
     with c_header:
-        # Alterado para usar datetime.now(fuso_br)
         st.title(f"📊 SmartWallet | {datetime.now(fuso_br).strftime('%d/%m/%Y')}")
     with c_meta:
         status_color = "🟢" if current_data['status'] == "online" else "🔴"
-        # Alterado para usar datetime.now(fuso_br)
         st.caption(f"{status_color} Data Feed: {current_data['status'].upper()} | {datetime.now(fuso_br).strftime('%H:%M:%S')}")
 
     cols = st.columns(4)
@@ -295,6 +327,15 @@ def render_market_ticker():
 # --- EXECUÇÃO PRINCIPAL ---
 def main():
     render_market_ticker()
+    
+    # --- BARRA LATERAL PARA LOGIN / IDENTIFICAÇÃO ---
+    with st.sidebar:
+        st.header("🔐 Acesso")
+        # Define um ID padrão para não quebrar na primeira execução
+        wallet_id = st.text_input("ID do Usuário / Carteira", value="Demonstracao", help="Digite seu nome ou ID para carregar seus dados salvos.")
+        st.info(f"Conectado como: {wallet_id}")
+        st.divider()
+
     st.divider()
 
     current_market = st.session_state.get('market_cache', fetch_market_data())
@@ -318,8 +359,9 @@ def main():
                 if "error" in result:
                     st.error(result["error"])
                 else:
+                    # Passa o wallet_id para salvar no usuário correto
                     saved = db_manager.insert_transaction(
-                        result['date'], result['amount'], result['category'], result['description'], result['type']
+                        wallet_id, result['date'], result['amount'], result['category'], result['description'], result['type']
                     )
                     if saved:
                         msg_type = "Receita" if result['type'] == 'Receita' else "Despesa"
@@ -340,15 +382,16 @@ def main():
         
         if st.button("Salvar Registro"):
             if amount > 0:
-                # Alterado para usar datetime.now(fuso_br)
-                db_manager.insert_transaction(datetime.now(fuso_br), amount, category, desc or category, trans_type)
+                # Passa o wallet_id
+                db_manager.insert_transaction(wallet_id, datetime.now(fuso_br), amount, category, desc or category, trans_type)
                 st.success("Registro salvo com sucesso.")
             else:
                 st.warning("O valor deve ser positivo.")
 
     # 3. ANALYTICS (DASHBOARD)
     with tabs[2]:
-        df = db_manager.fetch_all()
+        # Busca dados apenas do usuário logado
+        df = db_manager.fetch_all(wallet_id)
         if not df.empty:
             income = df[df['type'] == 'Receita']['amount'].sum()
             expense = df[df['type'] == 'Despesa']['amount'].sum()
@@ -378,7 +421,7 @@ def main():
     # 4. INVESTIMENTOS
     with tabs[3]:
         st.subheader("Carteira de Investimentos")
-        df = db_manager.fetch_all()
+        df = db_manager.fetch_all(wallet_id)
         
         if not df.empty:
             invest_df = df[df['category'].isin(['Investimentos', 'Investimento'])]
@@ -398,7 +441,7 @@ def main():
 
     # 5. EXTRATO (GRID)
     with tabs[4]:
-        df = db_manager.fetch_all()
+        df = db_manager.fetch_all(wallet_id)
         if not df.empty:
             display_df = df.rename(columns={
                 'date': 'Data', 'amount': 'Valor', 'category': 'Categoria', 
@@ -415,9 +458,9 @@ def main():
 
             st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
             
-            if st.button("Reiniciar Sessão (Limpar Dados)"):
+            if st.button("Limpar Dados desta Carteira"):
                 try:
-                    db_manager.clear_data()
+                    db_manager.clear_data(wallet_id)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao reiniciar: {e}")
@@ -426,7 +469,7 @@ def main():
     with tabs[5]:
         st.markdown("#### Consultoria Financeira Avançada")
         if st.button("Solicitar Diagnóstico"):
-            df = db_manager.fetch_all()
+            df = db_manager.fetch_all(wallet_id)
             if not df.empty:
                 with st.spinner("Gerando análise..."):
                     report = generate_financial_report(df)
