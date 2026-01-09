@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 3.0.0 (Secure Auth Edition)
+Version: 3.1.0 (Clean UX Edition)
 """
 
 import streamlit as st
@@ -40,7 +40,6 @@ def configure_api():
     try:
         api_key = st.secrets.get("GEMINI_KEY")
         if not api_key:
-            # Fallback silencioso para não quebrar a UI de login se a chave faltar
             pass 
         else:
             genai.configure(api_key=api_key)
@@ -54,7 +53,7 @@ configure_api()
 st.markdown("""
     <style>
     /* =========================================
-       ESTILOS DA TELA DE LOGIN (NOVO)
+       ESTILOS DA TELA DE LOGIN
        ========================================= */
     .login-container {
         background-color: #1E1E1E;
@@ -130,10 +129,6 @@ class SecureTransactionDAO:
         return sqlite3.connect(self.db_name, check_same_thread=False)
 
     def _hash_password(self, password):
-        """
-        Gera um hash SHA-256 da senha.
-        Isso garante que a senha real nunca seja salva no banco.
-        """
         return hashlib.sha256(password.encode()).hexdigest()
 
     def init_db(self):
@@ -141,8 +136,6 @@ class SecureTransactionDAO:
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                
-                # Tabela 1: Usuários (Login)
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS users (
                         username TEXT PRIMARY KEY,
@@ -150,8 +143,6 @@ class SecureTransactionDAO:
                         created_at TEXT
                     )
                 """)
-                
-                # Tabela 2: Transações (Dados)
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS transactions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -168,13 +159,10 @@ class SecureTransactionDAO:
         except Exception as e:
             st.error(f"Erro Crítico de Banco de Dados: {e}")
 
-    # --- MÉTODOS DE AUTENTICAÇÃO (NOVO) ---
-    
+    # --- MÉTODOS DE AUTENTICAÇÃO ---
     def create_user(self, username, password):
-        """Registra um novo usuário com senha criptografada"""
         if not username or not password:
             return False, "Usuário e senha são obrigatórios."
-            
         pwd_hash = self._hash_password(password)
         try:
             with self.get_connection() as conn:
@@ -191,7 +179,6 @@ class SecureTransactionDAO:
             return False, f"Erro ao criar conta: {e}"
 
     def verify_login(self, username, password):
-        """Verifica as credenciais do usuário"""
         pwd_hash = self._hash_password(password)
         try:
             with self.get_connection() as conn:
@@ -205,8 +192,7 @@ class SecureTransactionDAO:
         except Exception:
             return False
 
-    # --- MÉTODOS FINANCEIROS (MANTIDOS DO ORIGINAL) ---
-
+    # --- MÉTODOS FINANCEIROS ---
     def insert_transaction(self, user_id, date, amount, category, description, type_):
         try:
             with self.get_connection() as conn:
@@ -223,21 +209,18 @@ class SecureTransactionDAO:
     def fetch_all(self, user_id):
         try:
             with self.get_connection() as conn:
-                # Busca SOMENTE dados do usuário logado
                 df = pd.read_sql_query(
                     "SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC, id DESC", 
                     conn, 
                     params=(user_id,)
                 )
             if df.empty:
-                # Retorna estrutura vazia para evitar erros no Pandas
                 return pd.DataFrame(columns=['id', 'user_id', 'date', 'amount', 'category', 'description', 'type'])
             return df
         except Exception:
             return pd.DataFrame(columns=['id', 'user_id', 'date', 'amount', 'category', 'description', 'type'])
             
     def clear_data(self, user_id):
-        """Limpa dados APENAS do usuário logado"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -252,9 +235,6 @@ db_manager = SecureTransactionDAO()
 
 # --- SERVIÇO DE DADOS DE MERCADO ---
 def fetch_market_data():
-    """
-    Obtém cotações utilizando Frankfurter (Moedas Fiat) e AwesomeAPI (Bitcoin).
-    """
     headers = {"User-Agent": "Mozilla/5.0"}
     market_data = {
         "USD": 5.39, "EUR": 6.28, "GBP": 7.24, "BTC": 490775.00, "status": "offline" 
@@ -264,15 +244,11 @@ def fetch_market_data():
         if resp_usd.status_code == 200:
             market_data["USD"] = float(resp_usd.json()['rates']['BRL'])
             market_data["status"] = "online"
-
-        resp_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=2)
-        if resp_eur.status_code == 200:
-            market_data["EUR"] = float(resp_eur.json()['rates']['BRL'])
-
-        resp_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=2)
-        if resp_gbp.status_code == 200:
-            market_data["GBP"] = float(resp_gbp.json()['rates']['BRL'])
-
+        
+        # Warm-up calls
+        requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=1)
+        requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=1)
+        
         resp_btc = requests.get("https://economia.awesomeapi.com.br/last/BTC-BRL", headers=headers, timeout=2)
         if resp_btc.status_code == 200:
             btc_val = resp_btc.json()['BTCBRL']['bid']
@@ -283,9 +259,6 @@ def fetch_market_data():
 
 # --- PROCESSAMENTO DE LINGUAGEM NATURAL (NLP) ---
 def process_natural_language_input(text, market_data):
-    """
-    Pipeline de processamento de texto livre utilizando modelo generativo.
-    """
     prompt = f"""
     Role: Financial Data Parser.
     Context Date: {datetime.now(fuso_br).strftime('%Y-%m-%d')}
@@ -318,7 +291,6 @@ def process_natural_language_input(text, market_data):
     return {"error": "Não foi possível processar a solicitação no momento."}
 
 def generate_financial_report(df):
-    """Gera análise qualitativa executiva."""
     if df.empty: return "Dados insuficientes para análise."
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
@@ -368,21 +340,20 @@ def render_market_ticker():
             </div>
             """, unsafe_allow_html=True)
 
-# --- FUNÇÃO DE CONTROLE DE LOGIN ---
+# --- FUNÇÃO DE CONTROLE DE LOGIN (ATUALIZADA) ---
 def login_flow():
     """
-    Gerencia a interface de Login/Registro antes de mostrar o app principal.
+    Gerencia a interface de Login/Registro.
+    As Keys foram alteradas para 'access_code' e 'registry_code' para limpar o histórico do navegador.
     """
-    # Inicializa variáveis de sessão se não existirem
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
         st.session_state['username'] = None
 
-    # Se já estiver logado, retorna o usuário
     if st.session_state['logged_in']:
         return st.session_state['username']
 
-    # --- TELA DE LOGIN (DESIGN CAPRICHADO) ---
+    # --- TELA DE LOGIN ---
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
@@ -397,9 +368,11 @@ def login_flow():
 
         # ABA: LOGIN
         with tab_login:
-            with st.form("login_form"):
-                user_login = st.text_input("Usuário", placeholder="Seu nome de usuário", key="login_user")
-                pass_login = st.text_input("Senha", type="password", placeholder="Sua senha secreta", key="login_pass")
+            # Adicionado clear_on_submit=True para evitar histórico agressivo
+            with st.form("login_form", clear_on_submit=True):
+                # KEY ÚNICA NOVA: 'login_access_code_v1' evita sugestões antigas
+                user_login = st.text_input("Usuário", placeholder="Seu nome de usuário", key="login_access_code_v1")
+                pass_login = st.text_input("Senha", type="password", placeholder="Sua senha secreta", key="login_pass_code_v1")
                 submit_login = st.form_submit_button("Acessar Painel", type="primary", use_container_width=True)
 
                 if submit_login:
@@ -414,11 +387,13 @@ def login_flow():
 
         # ABA: REGISTRO
         with tab_register:
-            with st.form("register_form"):
+            # Adicionado clear_on_submit=True
+            with st.form("register_form", clear_on_submit=True):
                 st.info("Crie um usuário único para proteger seus dados.")
-                new_user = st.text_input("Escolha um Usuário", placeholder="Ex: fernando.silva", key="reg_user")
-                new_pass = st.text_input("Escolha uma Senha", type="password", key="reg_pass")
-                new_pass_confirm = st.text_input("Confirme a Senha", type="password", key="reg_pass_conf")
+                # KEY ÚNICA NOVA: 'new_registry_user_v1' evita sugestões antigas
+                new_user = st.text_input("Escolha um Usuário", placeholder="Ex: fernando.silva", key="new_registry_user_v1")
+                new_pass = st.text_input("Escolha uma Senha", type="password", key="new_registry_pass_v1")
+                new_pass_confirm = st.text_input("Confirme a Senha", type="password", key="new_registry_pass_conf_v1")
                 submit_register = st.form_submit_button("Criar Conta", use_container_width=True)
 
                 if submit_register:
@@ -433,16 +408,12 @@ def login_flow():
                         else:
                             st.error(message)
 
-    # Bloqueia o restante do código até o login ser efetuado
     st.stop()
 
 # --- EXECUÇÃO PRINCIPAL (APP) ---
 def main():
-    # 1. Verifica autenticação antes de tudo
     current_user = login_flow()
 
-    # 2. Se passou pelo login, mostra a interface principal
-    
     # Barra lateral logada
     with st.sidebar:
         st.header("👤 Perfil")
@@ -454,13 +425,12 @@ def main():
         st.divider()
         st.info("Seus dados estão criptografados e salvos localmente.")
 
-    # 3. Renderiza o Ticker de Mercado
     render_market_ticker()
     st.divider()
 
     current_market = st.session_state.get('market_cache', fetch_market_data())
 
-    # Abas Principais (TUDO ORIGINAL AQUI PARA BAIXO)
+    # Abas Principais
     tabs = st.tabs(["🤖 Input Inteligente", "✍️ Registro Manual", "📈 Analytics", "💰 Investimentos", "📑 Extrato", "🧠 Consultoria"])
 
     # 1. INPUT NLP
