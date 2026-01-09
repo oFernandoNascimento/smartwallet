@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 2.2.0 (SQLite Persistence Edition)
+Version: 3.0.0 (Secure Auth Edition)
 """
 
 import streamlit as st
@@ -17,7 +17,8 @@ import json
 import re
 import time
 import pytz
-import sqlite3  # Novo import para o Banco de Dados
+import sqlite3
+import hashlib
 from datetime import datetime
 
 # --- CONFIGURAÇÃO GLOBAL DE FUSO HORÁRIO ---
@@ -35,14 +36,11 @@ st.set_page_config(
 def configure_api():
     """
     Configura a conexão com a API de LLM utilizando variáveis de ambiente seguras.
-    Requer o arquivo .streamlit/secrets.toml configurado.
     """
     try:
-        # Tenta recuperar a chave dos segredos do ambiente (Melhor Prática de Segurança)
         api_key = st.secrets.get("GEMINI_KEY")
         if not api_key:
-            # Fallback opcional ou erro
-            # genai.configure(api_key="SUA_KEY_AQUI") # Apenas para teste local sem secrets
+            # Fallback silencioso para não quebrar a UI de login se a chave faltar
             pass 
         else:
             genai.configure(api_key=api_key)
@@ -52,10 +50,37 @@ def configure_api():
 
 configure_api()
 
-# --- ESTILIZAÇÃO CSS (INTERFACE MODERNA) ---
+# --- ESTILIZAÇÃO CSS (INTERFACE MODERNA & LOGIN) ---
 st.markdown("""
     <style>
-    /* Animações de Feedback Visual (Market Data) */
+    /* =========================================
+       ESTILOS DA TELA DE LOGIN (NOVO)
+       ========================================= */
+    .login-container {
+        background-color: #1E1E1E;
+        padding: 40px;
+        border-radius: 15px;
+        border: 1px solid #333;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    .login-header {
+        font-size: 28px;
+        font-weight: bold;
+        color: #4CAF50;
+        margin-bottom: 10px;
+        font-family: 'Roboto', sans-serif;
+    }
+    .login-sub {
+        font-size: 14px;
+        color: #aaa;
+        margin-bottom: 30px;
+    }
+    
+    /* =========================================
+       ESTILOS ORIGINAIS DO APP
+       ========================================= */
     @keyframes blink-up {
         0% { background-color: #0E1117; border-color: #444; }
         50% { background-color: rgba(76, 175, 80, 0.15); border-color: #4CAF50; transform: scale(1.01); }
@@ -67,7 +92,6 @@ st.markdown("""
         100% { background-color: #0E1117; border-color: #444; }
     }
 
-    /* Componentes de UI */
     .market-card { 
         background-color: #0E1117; 
         border: 1px solid #333; 
@@ -85,16 +109,16 @@ st.markdown("""
     .trend-down { color: #F44336; }
     .trend-flat { color: #E0E0E0; }
     
-    /* Ajustes Gerais */
     div[data-testid="stMetricValue"] { font-size: 24px; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- CAMADA DE PERSISTÊNCIA (SQLITE3) ---
-class TransactionDAO:
+# --- CAMADA DE PERSISTÊNCIA (SQLITE3 + AUTENTICAÇÃO SEGURA) ---
+class SecureTransactionDAO:
     """
-    Gerenciador de dados persistente usando SQLite.
-    Substitui o armazenamento em sessão para salvar dados permanentemente em arquivo.
+    Gerenciador de Banco de Dados Híbrido:
+    1. Gerencia Usuários (Criptografia SHA-256)
+    2. Gerencia Transações Financeiras
     """
     
     def __init__(self, db_name="smartwallet.db"):
@@ -102,14 +126,32 @@ class TransactionDAO:
         self.init_db()
 
     def get_connection(self):
-        """Estabelece conexão com o banco de dados"""
+        """Estabelece conexão thread-safe com SQLite"""
         return sqlite3.connect(self.db_name, check_same_thread=False)
 
+    def _hash_password(self, password):
+        """
+        Gera um hash SHA-256 da senha.
+        Isso garante que a senha real nunca seja salva no banco.
+        """
+        return hashlib.sha256(password.encode()).hexdigest()
+
     def init_db(self):
-        """Cria a tabela de transações se ela não existir"""
+        """Inicializa as tabelas de Usuários e Transações"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # Tabela 1: Usuários (Login)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        username TEXT PRIMARY KEY,
+                        password_hash TEXT NOT NULL,
+                        created_at TEXT
+                    )
+                """)
+                
+                # Tabela 2: Transações (Dados)
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS transactions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,15 +160,54 @@ class TransactionDAO:
                         amount REAL,
                         category TEXT,
                         description TEXT,
-                        type TEXT
+                        type TEXT,
+                        FOREIGN KEY(user_id) REFERENCES users(username)
                     )
                 """)
                 conn.commit()
         except Exception as e:
-            st.error(f"Erro ao inicializar banco de dados: {e}")
+            st.error(f"Erro Crítico de Banco de Dados: {e}")
+
+    # --- MÉTODOS DE AUTENTICAÇÃO (NOVO) ---
+    
+    def create_user(self, username, password):
+        """Registra um novo usuário com senha criptografada"""
+        if not username or not password:
+            return False, "Usuário e senha são obrigatórios."
+            
+        pwd_hash = self._hash_password(password)
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+                    (username, pwd_hash, str(datetime.now()))
+                )
+                conn.commit()
+            return True, "Conta criada com sucesso! Faça login."
+        except sqlite3.IntegrityError:
+            return False, "Este nome de usuário já está em uso."
+        except Exception as e:
+            return False, f"Erro ao criar conta: {e}"
+
+    def verify_login(self, username, password):
+        """Verifica as credenciais do usuário"""
+        pwd_hash = self._hash_password(password)
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT username FROM users WHERE username = ? AND password_hash = ?", 
+                    (username, pwd_hash)
+                )
+                user = cursor.fetchone()
+                return user is not None
+        except Exception:
+            return False
+
+    # --- MÉTODOS FINANCEIROS (MANTIDOS DO ORIGINAL) ---
 
     def insert_transaction(self, user_id, date, amount, category, description, type_):
-        """Insere uma nova transação vinculada a um usuário (wallet_id)"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -140,26 +221,23 @@ class TransactionDAO:
             return False
 
     def fetch_all(self, user_id):
-        """Busca todas as transações de um usuário específico"""
         try:
             with self.get_connection() as conn:
-                # Carrega dados filtrando pelo user_id
+                # Busca SOMENTE dados do usuário logado
                 df = pd.read_sql_query(
                     "SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC, id DESC", 
                     conn, 
                     params=(user_id,)
                 )
-            
-            # Se o dataframe estiver vazio, retorna estrutura vazia com as colunas corretas
             if df.empty:
+                # Retorna estrutura vazia para evitar erros no Pandas
                 return pd.DataFrame(columns=['id', 'user_id', 'date', 'amount', 'category', 'description', 'type'])
-            
             return df
         except Exception:
             return pd.DataFrame(columns=['id', 'user_id', 'date', 'amount', 'category', 'description', 'type'])
             
     def clear_data(self, user_id):
-        """Remove apenas os dados do usuário atual"""
+        """Limpa dados APENAS do usuário logado"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -169,8 +247,8 @@ class TransactionDAO:
         except Exception:
             return False
 
-# Instância Global do Gerenciador de Banco de Dados
-db_manager = TransactionDAO()
+# Instância Global Segura
+db_manager = SecureTransactionDAO()
 
 # --- SERVIÇO DE DADOS DE MERCADO ---
 def fetch_market_data():
@@ -178,18 +256,10 @@ def fetch_market_data():
     Obtém cotações utilizando Frankfurter (Moedas Fiat) e AwesomeAPI (Bitcoin).
     """
     headers = {"User-Agent": "Mozilla/5.0"}
-    
-    # 1. Valores de segurança (Fallback)
     market_data = {
-        "USD": 5.39,
-        "EUR": 6.28,
-        "GBP": 7.24,
-        "BTC": 490775.00,
-        "status": "offline" 
+        "USD": 5.39, "EUR": 6.28, "GBP": 7.24, "BTC": 490775.00, "status": "offline" 
     }
-    
     try:
-        # 2. Busca Dados Fiat (Frankfurter API)
         resp_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=2)
         if resp_usd.status_code == 200:
             market_data["USD"] = float(resp_usd.json()['rates']['BRL'])
@@ -203,15 +273,12 @@ def fetch_market_data():
         if resp_gbp.status_code == 200:
             market_data["GBP"] = float(resp_gbp.json()['rates']['BRL'])
 
-        # 3. Busca Bitcoin via AwesomeAPI
         resp_btc = requests.get("https://economia.awesomeapi.com.br/last/BTC-BRL", headers=headers, timeout=2)
         if resp_btc.status_code == 200:
             btc_val = resp_btc.json()['BTCBRL']['bid']
             market_data["BTC"] = float(btc_val)
-
-    except Exception as e:
+    except Exception:
         pass
-        
     return market_data
 
 # --- PROCESSAMENTO DE LINGUAGEM NATURAL (NLP) ---
@@ -230,58 +297,44 @@ def process_natural_language_input(text, market_data):
     2. Convert foreign currencies to BRL using reference rates.
     3. Format description in formal Portuguese (Capitalized).
     4. If conversion occurs, append "(Orig: CURRENCY VALUE)" to description.
-    5. CRITICAL: If the user is BUYING an asset (Bitcoin, Stock, Dollar for holding), calculate the quantity = (Amount_BRL / Rate) and append "(Qty: X.XXXX ASSET)" to the description.
-       Example: "Comprei 1500 reais de Bitcoin" -> Description: "Aquisição de Bitcoin (Qty: 0.003056 BTC)".
-       Mark category as "Investimentos".
+    5. Calculate asset quantity if buying assets.
     
     Output Format (JSON Only):
     {{ "amount": float, "category": "string", "date": "YYYY-MM-DD", "description": "string", "type": "Receita" or "Despesa" }}
     """
-    
     models = ['gemini-2.5-flash', 'gemini-pro', 'gemini-1.5-flash']
-    
     for model_name in models:
         try:
             model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
-            
             clean_text = response.text.replace("```json", "").replace("```", "").strip()
             match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-            
             if match:
                 payload = json.loads(match.group(0))
                 if all(k in payload for k in ('amount', 'category', 'type')):
                     return payload
         except Exception:
             continue
-            
     return {"error": "Não foi possível processar a solicitação no momento."}
 
 def generate_financial_report(df):
-    """Gera análise qualitativa executiva baseada no histórico de transações."""
+    """Gera análise qualitativa executiva."""
     if df.empty: return "Dados insuficientes para análise."
-    
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
         Analyst Role: Senior Financial Advisor.
         Data Context: \n{df.to_string()}\n
-        
-        Objective: Provide a formal, rational, and actionable financial assessment using Portuguese.
-        Structure:
-        1. Diagnóstico de Saúde Financeira.
-        2. Identificação de Gargalos.
-        3. Plano de Ação (3 pontos estratégicos).
+        Objective: Provide a formal financial assessment in Portuguese.
+        Structure: 1. Diagnóstico, 2. Gargalos, 3. Plano de Ação.
         """
         return model.generate_content(prompt).text
     except Exception:
         return "Serviço de análise indisponível temporariamente."
 
-# --- COMPONENTES DE UI (Auto-Update) ---
+# --- COMPONENTES DE UI (TICKER) ---
 @st.fragment(run_every=10)
 def render_market_ticker():
-    """Renderiza o cabeçalho de cotações com atualização automática via Fragmentos."""
-    
     if 'market_cache' not in st.session_state:
         st.session_state['market_cache'] = fetch_market_data()
     
@@ -294,27 +347,18 @@ def render_market_ticker():
         st.title(f"📊 SmartWallet | {datetime.now(fuso_br).strftime('%d/%m/%Y')}")
     with c_meta:
         status_color = "🟢" if current_data['status'] == "online" else "🔴"
-        st.caption(f"{status_color} Data Feed: {current_data['status'].upper()} | {datetime.now(fuso_br).strftime('%H:%M:%S')}")
+        st.caption(f"{status_color} Feed: {current_data['status'].upper()} | {datetime.now(fuso_br).strftime('%H:%M:%S')}")
 
     cols = st.columns(4)
-    assets = [("USD", "Dólar Comercial"), ("EUR", "Euro"), ("GBP", "Libra Esterlina"), ("BTC", "Bitcoin")]
+    assets = [("USD", "Dólar"), ("EUR", "Euro"), ("GBP", "Libra"), ("BTC", "Bitcoin")]
 
     for idx, (symbol, label) in enumerate(assets):
         curr_val = current_data.get(symbol, 0)
         prev_val = previous_data.get(symbol, 0)
         
-        anim_class = ""
-        trend_class = "trend-flat"
-        icon = ""
-        
-        if curr_val > prev_val:
-            anim_class = "anim-up"
-            trend_class = "trend-up"
-            icon = "▲"
-        elif curr_val < prev_val:
-            anim_class = "anim-down"
-            trend_class = "trend-down"
-            icon = "▼"
+        anim_class = "anim-up" if curr_val > prev_val else "anim-down" if curr_val < prev_val else ""
+        trend_class = "trend-up" if curr_val > prev_val else "trend-down" if curr_val < prev_val else "trend-flat"
+        icon = "▲" if curr_val > prev_val else "▼" if curr_val < prev_val else ""
             
         with cols[idx]:
             st.markdown(f"""
@@ -324,28 +368,104 @@ def render_market_ticker():
             </div>
             """, unsafe_allow_html=True)
 
-# --- EXECUÇÃO PRINCIPAL ---
-def main():
-    render_market_ticker()
-    
-    # --- BARRA LATERAL PARA LOGIN / IDENTIFICAÇÃO ---
-    with st.sidebar:
-        st.header("🔐 Acesso")
-        # Define um ID padrão para não quebrar na primeira execução
-        wallet_id = st.text_input("ID do Usuário / Carteira", value="Demonstracao", help="Digite seu nome ou ID para carregar seus dados salvos.")
-        st.info(f"Conectado como: {wallet_id}")
-        st.divider()
+# --- FUNÇÃO DE CONTROLE DE LOGIN ---
+def login_flow():
+    """
+    Gerencia a interface de Login/Registro antes de mostrar o app principal.
+    """
+    # Inicializa variáveis de sessão se não existirem
+    if 'logged_in' not in st.session_state:
+        st.session_state['logged_in'] = False
+        st.session_state['username'] = None
 
+    # Se já estiver logado, retorna o usuário
+    if st.session_state['logged_in']:
+        return st.session_state['username']
+
+    # --- TELA DE LOGIN (DESIGN CAPRICHADO) ---
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown("""
+        <div class="login-container">
+            <div class="login-header">🔐 SmartWallet Access</div>
+            <div class="login-sub">Gerenciamento financeiro seguro e inteligente</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        tab_login, tab_register = st.tabs(["🔑 Entrar na Conta", "📝 Criar Nova Conta"])
+
+        # ABA: LOGIN
+        with tab_login:
+            with st.form("login_form"):
+                user_login = st.text_input("Usuário", placeholder="Seu nome de usuário", key="login_user")
+                pass_login = st.text_input("Senha", type="password", placeholder="Sua senha secreta", key="login_pass")
+                submit_login = st.form_submit_button("Acessar Painel", type="primary", use_container_width=True)
+
+                if submit_login:
+                    if db_manager.verify_login(user_login, pass_login):
+                        st.session_state['logged_in'] = True
+                        st.session_state['username'] = user_login
+                        st.toast(f"Bem-vindo de volta, {user_login}!", icon="🎉")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Usuário ou senha incorretos.")
+
+        # ABA: REGISTRO
+        with tab_register:
+            with st.form("register_form"):
+                st.info("Crie um usuário único para proteger seus dados.")
+                new_user = st.text_input("Escolha um Usuário", placeholder="Ex: fernando.silva", key="reg_user")
+                new_pass = st.text_input("Escolha uma Senha", type="password", key="reg_pass")
+                new_pass_confirm = st.text_input("Confirme a Senha", type="password", key="reg_pass_conf")
+                submit_register = st.form_submit_button("Criar Conta", use_container_width=True)
+
+                if submit_register:
+                    if new_pass != new_pass_confirm:
+                        st.error("As senhas não coincidem.")
+                    elif len(new_pass) < 4:
+                        st.warning("A senha deve ter pelo menos 4 caracteres.")
+                    else:
+                        success, message = db_manager.create_user(new_user, new_pass)
+                        if success:
+                            st.success(message)
+                        else:
+                            st.error(message)
+
+    # Bloqueia o restante do código até o login ser efetuado
+    st.stop()
+
+# --- EXECUÇÃO PRINCIPAL (APP) ---
+def main():
+    # 1. Verifica autenticação antes de tudo
+    current_user = login_flow()
+
+    # 2. Se passou pelo login, mostra a interface principal
+    
+    # Barra lateral logada
+    with st.sidebar:
+        st.header("👤 Perfil")
+        st.success(f"Usuário: **{current_user}**")
+        if st.button("Sair / Logout", type="secondary"):
+            st.session_state['logged_in'] = False
+            st.session_state['username'] = None
+            st.rerun()
+        st.divider()
+        st.info("Seus dados estão criptografados e salvos localmente.")
+
+    # 3. Renderiza o Ticker de Mercado
+    render_market_ticker()
     st.divider()
 
     current_market = st.session_state.get('market_cache', fetch_market_data())
 
-    # Abas Principais
+    # Abas Principais (TUDO ORIGINAL AQUI PARA BAIXO)
     tabs = st.tabs(["🤖 Input Inteligente", "✍️ Registro Manual", "📈 Analytics", "💰 Investimentos", "📑 Extrato", "🧠 Consultoria"])
 
     # 1. INPUT NLP
     with tabs[0]:
-        st.markdown("#### 🗣️ Diga para a IA o que você gastou ou recebeu")
+        st.markdown(f"#### 🗣️ Olá, {current_user}! O que vamos registrar hoje?")
         with st.form("nlp_form", clear_on_submit=True):
             user_input = st.text_input(
                 "Descreva sua movimentação:", 
@@ -359,9 +479,8 @@ def main():
                 if "error" in result:
                     st.error(result["error"])
                 else:
-                    # Passa o wallet_id para salvar no usuário correto
                     saved = db_manager.insert_transaction(
-                        wallet_id, result['date'], result['amount'], result['category'], result['description'], result['type']
+                        current_user, result['date'], result['amount'], result['category'], result['description'], result['type']
                     )
                     if saved:
                         msg_type = "Receita" if result['type'] == 'Receita' else "Despesa"
@@ -382,16 +501,14 @@ def main():
         
         if st.button("Salvar Registro"):
             if amount > 0:
-                # Passa o wallet_id
-                db_manager.insert_transaction(wallet_id, datetime.now(fuso_br), amount, category, desc or category, trans_type)
+                db_manager.insert_transaction(current_user, datetime.now(fuso_br), amount, category, desc or category, trans_type)
                 st.success("Registro salvo com sucesso.")
             else:
                 st.warning("O valor deve ser positivo.")
 
     # 3. ANALYTICS (DASHBOARD)
     with tabs[2]:
-        # Busca dados apenas do usuário logado
-        df = db_manager.fetch_all(wallet_id)
+        df = db_manager.fetch_all(current_user)
         if not df.empty:
             income = df[df['type'] == 'Receita']['amount'].sum()
             expense = df[df['type'] == 'Despesa']['amount'].sum()
@@ -421,7 +538,7 @@ def main():
     # 4. INVESTIMENTOS
     with tabs[3]:
         st.subheader("Carteira de Investimentos")
-        df = db_manager.fetch_all(wallet_id)
+        df = db_manager.fetch_all(current_user)
         
         if not df.empty:
             invest_df = df[df['category'].isin(['Investimentos', 'Investimento'])]
@@ -441,7 +558,7 @@ def main():
 
     # 5. EXTRATO (GRID)
     with tabs[4]:
-        df = db_manager.fetch_all(wallet_id)
+        df = db_manager.fetch_all(current_user)
         if not df.empty:
             display_df = df.rename(columns={
                 'date': 'Data', 'amount': 'Valor', 'category': 'Categoria', 
@@ -458,9 +575,9 @@ def main():
 
             st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
             
-            if st.button("Limpar Dados desta Carteira"):
+            if st.button("⚠️ Apagar Todos os Meus Dados"):
                 try:
-                    db_manager.clear_data(wallet_id)
+                    db_manager.clear_data(current_user)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao reiniciar: {e}")
@@ -469,7 +586,7 @@ def main():
     with tabs[5]:
         st.markdown("#### Consultoria Financeira Avançada")
         if st.button("Solicitar Diagnóstico"):
-            df = db_manager.fetch_all(wallet_id)
+            df = db_manager.fetch_all(current_user)
             if not df.empty:
                 with st.spinner("Gerando análise..."):
                     report = generate_financial_report(df)
