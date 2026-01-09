@@ -16,7 +16,11 @@ import requests
 import json
 import re
 import time
+import pytz  # Acrescentado para fuso horário
 from datetime import datetime
+
+# --- CONFIGURAÇÃO GLOBAL DE FUSO HORÁRIO ---
+fuso_br = pytz.timezone('America/Sao_Paulo')
 
 # --- CONFIGURAÇÃO DO AMBIENTE E LAYOUT ---
 st.set_page_config(
@@ -180,10 +184,10 @@ def process_natural_language_input(text, market_data):
     """
     Pipeline de processamento de texto livre utilizando modelo generativo.
     """
-    # Prompt ajustado para calcular quantidade de ativos (ex: BTC)
+    # Prompt ajustado para calcular quantidade de ativos (ex: BTC) e usar data BR
     prompt = f"""
     Role: Financial Data Parser.
-    Context Date: {datetime.now().strftime('%Y-%m-%d')}
+    Context Date: {datetime.now(fuso_br).strftime('%Y-%m-%d')}
     User Input: "{text}"
     Reference Rates: USD={market_data['USD']}, EUR={market_data['EUR']}, GBP={market_data['GBP']}, BTC={market_data['BTC']}
     
@@ -253,10 +257,12 @@ def render_market_ticker():
     
     c_header, c_meta = st.columns([3, 1])
     with c_header:
-        st.title(f"📊 SmartWallet | {datetime.now().strftime('%d/%m/%Y')}")
+        # Alterado para usar datetime.now(fuso_br)
+        st.title(f"📊 SmartWallet | {datetime.now(fuso_br).strftime('%d/%m/%Y')}")
     with c_meta:
         status_color = "🟢" if current_data['status'] == "online" else "🔴"
-        st.caption(f"{status_color} Data Feed: {current_data['status'].upper()} | {datetime.now().strftime('%H:%M:%S')}")
+        # Alterado para usar datetime.now(fuso_br)
+        st.caption(f"{status_color} Data Feed: {current_data['status'].upper()} | {datetime.now(fuso_br).strftime('%H:%M:%S')}")
 
     cols = st.columns(4)
     assets = [("USD", "Dólar Comercial"), ("EUR", "Euro"), ("GBP", "Libra Esterlina"), ("BTC", "Bitcoin")]
@@ -300,7 +306,6 @@ def main():
     with tabs[0]:
         st.markdown("#### 🗣️ Diga para a IA o que você gastou ou recebeu")
         with st.form("nlp_form", clear_on_submit=True):
-            # AQUI ESTÁ A MUDANÇA NO PLACEHOLDER
             user_input = st.text_input(
                 "Descreva sua movimentação:", 
                 placeholder="Ex: Gastei 20 na farmácia, Recebi 1500 de salário ou Comprei 1500 reais em Bitcoin"
@@ -335,7 +340,8 @@ def main():
         
         if st.button("Salvar Registro"):
             if amount > 0:
-                db_manager.insert_transaction(datetime.now(), amount, category, desc or category, trans_type)
+                # Alterado para usar datetime.now(fuso_br)
+                db_manager.insert_transaction(datetime.now(fuso_br), amount, category, desc or category, trans_type)
                 st.success("Registro salvo com sucesso.")
             else:
                 st.warning("O valor deve ser positivo.")
