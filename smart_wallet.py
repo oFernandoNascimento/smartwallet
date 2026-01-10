@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.6.0 (1-Hour Refresh & Accurate Fallback)
+Version: 4.7.0 (Yahoo Finance Integration)
 """
 
 import streamlit as st
@@ -20,7 +20,7 @@ import pytz
 import hashlib
 import psycopg2 
 import io 
-import random
+import yfinance as yf # [NOVO] Biblioteca oficial do Yahoo Finance
 from datetime import datetime
 
 # --- CONFIGURAÇÃO GLOBAL DE FUSO HORÁRIO ---
@@ -217,64 +217,46 @@ class CloudTransactionDAO:
 
 db_manager = CloudTransactionDAO()
 
-# --- DADOS DE MERCADO (CACHEADO 1 HORA) ---
-# TTL = 3600 segundos (1 hora) de cache
+# --- DADOS DE MERCADO (YAHOO FINANCE) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_data():
-    market_data = {"USD": 0, "EUR": 0, "GBP": 0, "BTC": 0, "status": "offline", "variations": {}}
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    # 1. TENTATIVA PRINCIPAL: AwesomeAPI
+    # Valores de segurança caso tudo falhe (Baseados no seu print)
+    market_data = {
+        "USD": 5.37, "EUR": 6.25, "GBP": 7.20, "BTC": 486274.14, 
+        "status": "offline", 
+        "variations": {}
+    }
+    
     try:
-        url = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL"
-        resp = requests.get(url, headers=headers, timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            market_data["USD"] = float(data['USDBRL']['bid'])
-            market_data["EUR"] = float(data['EURBRL']['bid'])
-            market_data["GBP"] = float(data['GBPBRL']['bid'])
-            market_data["BTC"] = float(data['BTCBRL']['bid'])
+        # Códigos do Yahoo Finance:
+        # USDBRL=X (Dólar), EURBRL=X (Euro), GBPBRL=X (Libra), BTC-BRL (Bitcoin)
+        tickers = ["USDBRL=X", "EURBRL=X", "GBPBRL=X", "BTC-BRL"]
+        
+        # Baixa dados do dia atual (rápido)
+        data = yf.download(tickers, period="1d", progress=False)
+        
+        if not data.empty:
+            # Pega o último preço de fechamento (Close)
+            # A estrutura do DataFrame do yfinance pode variar, usamos iloc[-1] para pegar a última linha
+            last_quotes = data['Close'].iloc[-1]
+            last_opens = data['Open'].iloc[-1] # Para calcular variação
             
-            # Variações
-            market_data["variations"]["USD"] = float(data['USDBRL']['varBid'])
-            market_data["variations"]["EUR"] = float(data['EURBRL']['varBid'])
-            market_data["variations"]["GBP"] = float(data['GBPBRL']['varBid'])
-            market_data["variations"]["BTC"] = float(data['BTCBRL']['varBid'])
+            market_data["USD"] = float(last_quotes["USDBRL=X"])
+            market_data["EUR"] = float(last_quotes["EURBRL=X"])
+            market_data["GBP"] = float(last_quotes["GBPBRL=X"])
+            market_data["BTC"] = float(last_quotes["BTC-BRL"])
             
-            market_data["status"] = "online"
-            return market_data 
-    except Exception:
-        pass 
-
-    # 2. PLANO B: Frankfurter (Fallback para Fiat)
-    try:
-        r_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=3)
-        if r_usd.status_code == 200: market_data["USD"] = r_usd.json()['rates']['BRL']
+            # Calcula variação (Preço Atual - Preço Abertura)
+            market_data["variations"]["USD"] = market_data["USD"] - float(last_opens["USDBRL=X"])
+            market_data["variations"]["EUR"] = market_data["EUR"] - float(last_opens["EURBRL=X"])
+            market_data["variations"]["GBP"] = market_data["GBP"] - float(last_opens["GBPBRL=X"])
+            market_data["variations"]["BTC"] = market_data["BTC"] - float(last_opens["BTC-BRL"])
             
-        r_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=3)
-        if r_eur.status_code == 200: market_data["EUR"] = r_eur.json()['rates']['BRL']
+            market_data["status"] = "online (Yahoo)"
             
-        r_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=3)
-        if r_gbp.status_code == 200: market_data["GBP"] = r_gbp.json()['rates']['BRL']
-            
-        market_data["status"] = "online (backup)"
-    except Exception:
+    except Exception as e:
+        # Se der erro no Yahoo, mantém os valores de segurança
         pass
-
-    # 3. PLANO C: Binance para BTC
-    if market_data["BTC"] == 0:
-        try:
-            r_bin = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL", timeout=3)
-            if r_bin.status_code == 200: market_data["BTC"] = float(r_bin.json()['price'])
-        except Exception:
-            pass
-
-    # 4. FALLBACK FINAL (Valores do Google/Print do Usuário)
-    # Se tudo falhar, usa estes valores exatos para não parecer "errado"
-    if market_data["USD"] == 0: market_data["USD"] = 5.37
-    if market_data["EUR"] == 0: market_data["EUR"] = 6.25
-    if market_data["GBP"] == 0: market_data["GBP"] = 7.20
-    if market_data["BTC"] == 0: market_data["BTC"] = 486274.14
     
     return market_data
 
@@ -326,7 +308,7 @@ def generate_financial_report(df):
         return "Serviço indisponível."
 
 # --- UI TICKER (ATUALIZAÇÃO DE 1 HORA) ---
-@st.fragment(run_every=3600) # [MUDANÇA] 3600s = 1 Hora
+@st.fragment(run_every=3600)
 def render_market_ticker():
     # Chama a função cacheada
     current_data = fetch_market_data()
@@ -344,6 +326,7 @@ def render_market_ticker():
     for idx, (symbol, label) in enumerate(assets):
         curr_val = current_data.get(symbol, 0.0)
         
+        # Pega a variação calculada ou 0
         variation = current_data.get("variations", {}).get(symbol, 0.0)
         is_up = variation >= 0
         
