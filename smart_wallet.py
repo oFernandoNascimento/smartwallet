@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.5.3 (Binance API for Bitcoin Backup)
+Version: 4.7.0 (Yahoo Finance Integration)
 """
 
 import streamlit as st
@@ -20,7 +20,7 @@ import pytz
 import hashlib
 import psycopg2 
 import io 
-import random
+import yfinance as yf # [NOVO] Biblioteca oficial do Yahoo Finance
 from datetime import datetime
 
 # --- CONFIGURAÇÃO GLOBAL DE FUSO HORÁRIO ---
@@ -217,86 +217,51 @@ class CloudTransactionDAO:
 
 db_manager = CloudTransactionDAO()
 
-# --- DADOS DE MERCADO (ROBUST MULTI-API) ---
+# --- DADOS DE MERCADO (YAHOO FINANCE) ---
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_data():
-    market_data = {"USD": 0, "EUR": 0, "GBP": 0, "BTC": 0, "status": "offline", "variations": {}}
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    # 1. TENTATIVA PRINCIPAL: AwesomeAPI (Melhor para BRL)
+    # Valores de segurança caso tudo falhe (Baseados no seu print)
+    market_data = {
+        "USD": 5.37, "EUR": 6.25, "GBP": 7.20, "BTC": 486274.14, 
+        "status": "offline", 
+        "variations": {}
+    }
+    
     try:
-        url = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL"
-        resp = requests.get(url, headers=headers, timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            market_data["USD"] = float(data['USDBRL']['bid'])
-            market_data["EUR"] = float(data['EURBRL']['bid'])
-            market_data["GBP"] = float(data['GBPBRL']['bid'])
-            market_data["BTC"] = float(data['BTCBRL']['bid'])
+        # Códigos do Yahoo Finance:
+        # USDBRL=X (Dólar), EURBRL=X (Euro), GBPBRL=X (Libra), BTC-BRL (Bitcoin)
+        tickers = ["USDBRL=X", "EURBRL=X", "GBPBRL=X", "BTC-BRL"]
+        
+        # Baixa dados do dia atual (rápido)
+        data = yf.download(tickers, period="1d", progress=False)
+        
+        if not data.empty:
+            # Pega o último preço de fechamento (Close)
+            # A estrutura do DataFrame do yfinance pode variar, usamos iloc[-1] para pegar a última linha
+            last_quotes = data['Close'].iloc[-1]
+            last_opens = data['Open'].iloc[-1] # Para calcular variação
             
-            # Variações
-            market_data["variations"]["USD"] = float(data['USDBRL']['varBid'])
-            market_data["variations"]["EUR"] = float(data['EURBRL']['varBid'])
-            market_data["variations"]["GBP"] = float(data['GBPBRL']['varBid'])
-            market_data["variations"]["BTC"] = float(data['BTCBRL']['varBid'])
+            market_data["USD"] = float(last_quotes["USDBRL=X"])
+            market_data["EUR"] = float(last_quotes["EURBRL=X"])
+            market_data["GBP"] = float(last_quotes["GBPBRL=X"])
+            market_data["BTC"] = float(last_quotes["BTC-BRL"])
             
-            market_data["status"] = "online"
-            return market_data 
-    except Exception:
-        pass 
-
-    # 2. PLANO B: Frankfurter (Fallback para Fiat)
-    try:
-        # USD
-        r_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=3)
-        if r_usd.status_code == 200:
-            market_data["USD"] = r_usd.json()['rates']['BRL']
+            # Calcula variação (Preço Atual - Preço Abertura)
+            market_data["variations"]["USD"] = market_data["USD"] - float(last_opens["USDBRL=X"])
+            market_data["variations"]["EUR"] = market_data["EUR"] - float(last_opens["EURBRL=X"])
+            market_data["variations"]["GBP"] = market_data["GBP"] - float(last_opens["GBPBRL=X"])
+            market_data["variations"]["BTC"] = market_data["BTC"] - float(last_opens["BTC-BRL"])
             
-        # EUR
-        r_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=3)
-        if r_eur.status_code == 200:
-            market_data["EUR"] = r_eur.json()['rates']['BRL']
+            market_data["status"] = "online (Yahoo)"
             
-        # GBP
-        r_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=3)
-        if r_gbp.status_code == 200:
-            market_data["GBP"] = r_gbp.json()['rates']['BRL']
-            
-        market_data["status"] = "online (backup)"
-    except Exception:
+    except Exception as e:
+        # Se der erro no Yahoo, mantém os valores de segurança
         pass
-
-    # 3. PLANO C: Binance para BTC (Backup robusto para Crypto)
-    if market_data["BTC"] == 0:
-        try:
-            # Binance é extremamente estável
-            r_bin = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL", timeout=3)
-            if r_bin.status_code == 200:
-                market_data["BTC"] = float(r_bin.json()['price'])
-        except Exception:
-            pass
-
-    # 4. PLANO D: Coingecko para BTC (Último recurso)
-    if market_data["BTC"] == 0:
-        try:
-            r_btc = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl", headers=headers, timeout=3)
-            if r_btc.status_code == 200:
-                market_data["BTC"] = float(r_btc.json()['bitcoin']['brl'])
-        except Exception:
-            pass
-
-    # Se tudo falhar, usa valores aproximados de referência para não quebrar a UI
-    if market_data["USD"] == 0: market_data["USD"] = 5.40
-    if market_data["EUR"] == 0: market_data["EUR"] = 6.30
-    if market_data["GBP"] == 0: market_data["GBP"] = 7.20
-    if market_data["BTC"] == 0: market_data["BTC"] = 490000.00
     
     return market_data
 
-# --- GERADOR DE GRÁFICO SVG (SPARKLINE) ---
+# --- GERADOR DE GRÁFICO SVG ---
 def get_svg_chart(is_up):
-    """
-    Gera um código SVG de um gráfico de linha.
-    """
     color = "#4CAF50" if is_up else "#F44336"
     fill_color = "rgba(76, 175, 80, 0.2)" if is_up else "rgba(244, 67, 54, 0.2)"
     
@@ -307,7 +272,6 @@ def get_svg_chart(is_up):
         points = "0,20 20,40 40,30 60,70 80,60 100,90"
         area_points = "0,100 0,20 20,40 40,30 60,70 80,60 100,90 100,100"
 
-    # SVG compactado
     return f'<svg viewBox="0 0 100 100" class="chart-bg" preserveAspectRatio="none"><polygon points="{area_points}" fill="{fill_color}" /><polyline points="{points}" fill="none" stroke="{color}" stroke-width="3" vector-effect="non-scaling-stroke"/></svg>'
 
 # --- NLP ---
@@ -343,14 +307,11 @@ def generate_financial_report(df):
     except Exception:
         return "Serviço indisponível."
 
-# --- UI TICKER (COM GRÁFICOS) ---
-@st.fragment(run_every=15)
+# --- UI TICKER (ATUALIZAÇÃO DE 1 HORA) ---
+@st.fragment(run_every=3600)
 def render_market_ticker():
-    if 'market_cache' not in st.session_state:
-        st.session_state['market_cache'] = fetch_market_data()
-    
+    # Chama a função cacheada
     current_data = fetch_market_data()
-    st.session_state['market_cache'] = current_data
     
     c_header, c_meta = st.columns([3, 1])
     with c_header:
@@ -365,7 +326,7 @@ def render_market_ticker():
     for idx, (symbol, label) in enumerate(assets):
         curr_val = current_data.get(symbol, 0.0)
         
-        # Lógica de Tendência
+        # Pega a variação calculada ou 0
         variation = current_data.get("variations", {}).get(symbol, 0.0)
         is_up = variation >= 0
         
@@ -432,7 +393,7 @@ def main():
     render_market_ticker()
     st.divider()
 
-    market = st.session_state.get('market_cache', fetch_market_data())
+    market = fetch_market_data() # Usa a versão cacheada
     tabs = st.tabs(["🤖 Input IA", "✍️ Manual", "📈 Dashboard", "💰 Investimentos", "📑 Extrato Detalhado", "🧠 Consultor"])
 
     # 1. NLP
