@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.3.1 (Excel Headers in Portuguese)
+Version: 4.3.2 (Excel Formatted R$)
 """
 
 import streamlit as st
@@ -411,7 +411,7 @@ def main():
             else:
                 st.info("Nenhum investimento encontrado.")
 
-    # 5. EXTRATO (COM EXPORTAÇÃO EXCEL EM PORTUGUÊS)
+    # 5. EXTRATO (COM EXCEL FORMATADO R$)
     with tabs[4]:
         df = db_manager.fetch_all(user)
         if not df.empty:
@@ -419,7 +419,6 @@ def main():
             df['date'] = pd.to_datetime(df['date'])
             df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
             
-            # Aqui criamos a tabela traduzida 'display_df'
             display_df = df.rename(columns={
                 'amount': 'Valor', 'category': 'Categoria', 
                 'description': 'Descrição', 'type': 'Tipo'
@@ -435,15 +434,18 @@ def main():
 
             st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
             
-            # --- NOVIDADE: BOTÃO DE DOWNLOAD EXCEL REAL (.XLSX) ---
+            # --- NOVIDADE: BOTÃO DE DOWNLOAD EXCEL REAL ---
             st.divider()
             col_d1, col_d2 = st.columns([1, 4])
             with col_d1:
-                # Geração de Excel real em memória
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    # [CORREÇÃO]: Agora salvamos 'display_df' (que está em Português)
-                    display_df.to_excel(writer, index=False, sheet_name='Extrato')
+                    # [MUDANÇA] Criamos uma cópia do display_df para formatar o valor como R$ 2.500,00
+                    df_export = display_df.copy()
+                    # Mágica: Transforma número em texto formatado para o Excel
+                    df_export['Valor'] = df_export['Valor'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    
+                    df_export.to_excel(writer, index=False, sheet_name='Extrato')
                 
                 st.download_button(
                     label="📥 Baixar Excel",
