@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.7.1 (No YFinance - Stable Fallback)
+Version: 4.8.0 (Mercado Bitcoin API + Increased Timeouts)
 """
 
 import streamlit as st
@@ -211,10 +211,10 @@ class CloudTransactionDAO:
 
 db_manager = CloudTransactionDAO()
 
-# --- DADOS DE MERCADO (FRANKFURTER + BINANCE + BACKUP FIXO) ---
+# --- DADOS DE MERCADO (FRANKFURTER + MERCADO BITCOIN + TIMEOUT MAIOR) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_data():
-    # Valores de segurança baseados nos seus prints do Google
+    # Valores de backup (caso a internet falhe totalmente)
     market_data = {
         "USD": 5.37, 
         "EUR": 6.25, 
@@ -225,28 +225,37 @@ def fetch_market_data():
     }
     
     headers = {"User-Agent": "Mozilla/5.0"}
+    timeout_val = 10  # [MUDANÇA] Aumentado para 10 segundos para evitar erros na nuvem
 
+    # 1. BITCOIN (MERCADO BITCOIN - API Brasileira muito estável)
     try:
-        # 1. MOEDAS FIAT (FRANKFURTER - Estável para Dólar/Euro)
-        r_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=3)
-        if r_usd.status_code == 200: market_data["USD"] = r_usd.json()['rates']['BRL']
-            
-        r_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=3)
-        if r_eur.status_code == 200: market_data["EUR"] = r_eur.json()['rates']['BRL']
-            
-        r_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=3)
-        if r_gbp.status_code == 200: market_data["GBP"] = r_gbp.json()['rates']['BRL']
-        
-        # 2. BITCOIN (BINANCE - API Pública da corretora)
-        r_btc = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL", headers=headers, timeout=3)
+        r_btc = requests.get("https://www.mercadobitcoin.net/api/BTC/ticker/", headers=headers, timeout=timeout_val)
         if r_btc.status_code == 200:
-            market_data["BTC"] = float(r_btc.json()['price'])
+            market_data["BTC"] = float(r_btc.json()['ticker']['last'])
+            market_data["status"] = "online"
+    except Exception:
+        pass 
+
+    # 2. MOEDAS FIAT (FRANKFURTER - Estável para Dólar/Euro)
+    try:
+        # USD
+        r_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=timeout_val)
+        if r_usd.status_code == 200: 
+            market_data["USD"] = r_usd.json()['rates']['BRL']
+            market_data["status"] = "online"
             
-        market_data["status"] = "online"
+        # EUR
+        r_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=timeout_val)
+        if r_eur.status_code == 200: 
+            market_data["EUR"] = r_eur.json()['rates']['BRL']
+            
+        # GBP
+        r_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=timeout_val)
+        if r_gbp.status_code == 200: 
+            market_data["GBP"] = r_gbp.json()['rates']['BRL']
         
     except Exception:
-        # Se falhar qualquer coisa, ele mantém os valores fixos do dicionário inicial
-        pass 
+        pass # Se falhar, mantém o backup
     
     return market_data
 
@@ -306,6 +315,11 @@ def render_market_ticker():
     with c_header:
         st.title(f"📊 SmartWallet | {datetime.now(fuso_br).strftime('%d/%m/%Y')}")
     with c_meta:
+        # Botão discreto para forçar atualização
+        if st.button("🔄", help="Atualizar Cotações Agora"):
+            st.cache_data.clear()
+            st.rerun()
+            
         status_color = "🟢" if "online" in current_data['status'] else "🔴"
         st.caption(f"{status_color} Feed: {current_data['status'].upper()} | ☁️ Nuvem Conectada")
 
