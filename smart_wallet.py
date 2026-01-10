@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.8.1 (Frankfurter + Binance + Google Backup)
+Version: 4.10.0 (UX Improvements: User Instructions)
 """
 
 import streamlit as st
@@ -98,6 +98,19 @@ st.markdown("""
     .trend-up { color: #4CAF50; }
     .trend-down { color: #F44336; }
     .trend-flat { color: #E0E0E0; }
+    
+    /* DICAS DE USO (NOVO) */
+    .tips-box {
+        background-color: #262730;
+        border-left: 4px solid #4CAF50;
+        padding: 15px;
+        border-radius: 4px;
+        font-size: 14px;
+        margin-bottom: 20px;
+        color: #ddd;
+    }
+    .tips-title { font-weight: bold; color: #4CAF50; margin-bottom: 5px; display: block; }
+    .tips-item { margin-left: 10px; display: block; margin-bottom: 3px; }
     
     div[data-testid="stMetricValue"] { font-size: 24px; }
     </style>
@@ -211,10 +224,9 @@ class CloudTransactionDAO:
 
 db_manager = CloudTransactionDAO()
 
-# --- DADOS DE MERCADO (FRANKFURTER + BINANCE + BACKUP FIXO) ---
+# --- DADOS DE MERCADO (AWESOME API + BACKUP EXATO) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_data():
-    # Valores de segurança (Backup Exato Google/Seus Prints)
     market_data = {
         "USD": 5.37, 
         "EUR": 6.25, 
@@ -228,29 +240,23 @@ def fetch_market_data():
     timeout_val = 5
 
     try:
-        # 1. MOEDAS FIAT (FRANKFURTER)
-        # USD
-        r_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=timeout_val)
-        if r_usd.status_code == 200: market_data["USD"] = r_usd.json()['rates']['BRL']
-            
-        # EUR
-        r_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=timeout_val)
-        if r_eur.status_code == 200: market_data["EUR"] = r_eur.json()['rates']['BRL']
-            
-        # GBP
-        r_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=timeout_val)
-        if r_gbp.status_code == 200: market_data["GBP"] = r_gbp.json()['rates']['BRL']
+        # 1. MOEDAS FIAT (AwesomeAPI)
+        url_fiat = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL"
+        resp_fiat = requests.get(url_fiat, headers=headers, timeout=timeout_val)
         
-        # 2. BITCOIN (BINANCE - API Pública da Binance)
-        # Símbolo na Binance: BTCBRL
-        r_btc = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL", headers=headers, timeout=timeout_val)
+        if resp_fiat.status_code == 200:
+            data = resp_fiat.json()
+            market_data["USD"] = float(data['USDBRL']['bid'])
+            market_data["EUR"] = float(data['EURBRL']['bid'])
+            market_data["GBP"] = float(data['GBPBRL']['bid'])
+            market_data["status"] = "online"
+
+        # 2. BITCOIN (MERCADO BITCOIN)
+        r_btc = requests.get("https://www.mercadobitcoin.net/api/BTC/ticker/", headers=headers, timeout=timeout_val)
         if r_btc.status_code == 200:
-            market_data["BTC"] = float(r_btc.json()['price'])
+            market_data["BTC"] = float(r_btc.json()['ticker']['last'])
             
-        market_data["status"] = "online"
-        
     except Exception:
-        # Se falhar qualquer coisa, ele mantém os valores fixos do dicionário inicial
         pass 
     
     return market_data
@@ -293,16 +299,50 @@ def process_natural_language_input(text, market_data):
             continue
     return {"error": "Não foi possível processar."}
 
-def generate_financial_report(df):
-    if df.empty: return "Dados insuficientes."
+# --- CONSULTOR FINANCEIRO EXPERT ---
+def generate_financial_report(df, market_data):
+    if df.empty: return "Dados insuficientes para análise."
+    
+    resumo_mercado = f"""
+    Dólar: R$ {market_data['USD']}
+    Euro: R$ {market_data['EUR']}
+    Bitcoin: R$ {market_data['BTC']}
+    """
+    
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = f"Analyst Role: Senior Financial Advisor.\nData Context: \n{df.to_string()}\nObjective: Provide a formal financial assessment in Portuguese."
+        prompt = f"""
+        ATUE COMO: Um Consultor Financeiro de Elite e Cientista de Dados (Expert em Finanças Pessoais Brasileiras).
+        
+        DADOS DO USUÁRIO (Histórico de Transações):
+        {df.to_string()}
+        
+        DADOS DE MERCADO (Cotações Atuais):
+        {resumo_mercado}
+        
+        OBJETIVO: Gerar um relatório financeiro ultra-detalhado, estratégico e acionável.
+        
+        ESTRUTURA OBRIGATÓRIA DA RESPOSTA (Use Markdown e Emojis):
+        1. 📊 **Diagnóstico Executivo**:
+           - Resumo do fluxo de caixa.
+           - Saúde financeira geral (0 a 10).
+           
+        2. 🔍 **Análise Profunda de Gastos**:
+           - Identifique padrões e gastos supérfluos.
+           
+        3. 💰 **Estratégia de Investimentos & Mercado**:
+           - Cruzamento do saldo com oportunidades do mercado (Dólar, BTC).
+           
+        4. 🚀 **Plano de Ação Tático**:
+           - 3 tarefas imediatas.
+        
+        TOM DE VOZ: Profissional e direto.
+        """
         return model.generate_content(prompt).text
     except Exception:
-        return "Serviço indisponível."
+        return "Serviço de consultoria indisponível no momento."
 
-# --- UI TICKER (ATUALIZAÇÃO DE 1 HORA) ---
+# --- UI TICKER (LIMPO) ---
 @st.fragment(run_every=3600)
 def render_market_ticker():
     current_data = fetch_market_data()
@@ -311,11 +351,6 @@ def render_market_ticker():
     with c_header:
         st.title(f"📊 SmartWallet | {datetime.now(fuso_br).strftime('%d/%m/%Y')}")
     with c_meta:
-        # Botão discreto para forçar atualização
-        if st.button("🔄", help="Atualizar Cotações Agora"):
-            st.cache_data.clear()
-            st.rerun()
-            
         status_color = "🟢" if "online" in current_data['status'] else "🔴"
         st.caption(f"{status_color} Feed: {current_data['status'].upper()} | ☁️ Nuvem Conectada")
 
@@ -324,7 +359,6 @@ def render_market_ticker():
 
     for idx, (symbol, label) in enumerate(assets):
         curr_val = current_data.get(symbol, 0.0)
-        
         is_up = True 
         trend_class = "trend-up"
         icon = "▲"
@@ -392,10 +426,22 @@ def main():
     market = fetch_market_data() # Usa a versão cacheada
     tabs = st.tabs(["🤖 Input IA", "✍️ Manual", "📈 Dashboard", "💰 Investimentos", "📑 Extrato Detalhado", "🧠 Consultor"])
 
-    # 1. NLP
+    # 1. NLP (COM INSTRUÇÕES SIMPLES E ELEGANTES)
     with tabs[0]:
+        st.markdown(f"#### 🗣️ Olá, {user}! Vamos organizar suas finanças?")
+        
+        # Dicas Visuais (Estilo Card Clean)
+        st.markdown("""
+        <div class="tips-box">
+            <span class="tips-title">💡 Dicas de uso da IA:</span>
+            <span class="tips-item">• Digite como se falasse no Zap: <i>"Gastei 50 na padaria"</i></span>
+            <span class="tips-item">• Para entradas, use palavras chave: <i>"Recebi 2500 de salário"</i></span>
+            <span class="tips-item">• Invista facilmente: <i>"Comprei 100 reais em Bitcoin"</i></span>
+        </div>
+        """, unsafe_allow_html=True)
+
         with st.form("nlp"):
-            txt = st.text_input("Descreva a transação:")
+            txt = st.text_input("Descreva a transação:", placeholder="Ex: Almoço 45 reais, Uber 20, Recebi pix 100...")
             if st.form_submit_button("Processar") and txt:
                 with st.spinner("Processando..."):
                     res = process_natural_language_input(txt, market)
@@ -492,12 +538,13 @@ def main():
                     except Exception as e:
                         st.error(f"Erro ao reiniciar: {e}")
 
-    # 6. Consultor
+    # 6. Consultor (EXPERT)
     with tabs[5]:
-        if st.button("Gerar Análise"):
+        if st.button("Gerar Análise de Expert"):
             df = db_manager.fetch_all(user)
             if not df.empty:
-                st.write(generate_financial_report(df))
+                with st.spinner("Analisando seus dados e o mercado financeiro..."):
+                    st.write(generate_financial_report(df, market))
             else:
                 st.warning("Sem dados.")
 
