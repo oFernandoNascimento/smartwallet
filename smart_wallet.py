@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.0.0 (Cloud Database Edition - PostgreSQL)
+Version: 4.1.0 (Date Format Update)
 """
 
 import streamlit as st
@@ -18,7 +18,7 @@ import re
 import time
 import pytz
 import hashlib
-import psycopg2 # ALTERADO: Novo conector para PostgreSQL (Nuvem)
+import psycopg2 # Conector PostgreSQL
 from datetime import datetime
 
 # --- CONFIGURAÇÃO GLOBAL DE FUSO HORÁRIO ---
@@ -44,7 +44,7 @@ def configure_api():
         else:
             genai.configure(api_key=api_key)
             
-        # ALTERADO: Verificação extra para o Banco de Dados
+        # Verificação extra para o Banco de Dados
         if not st.secrets.get("DATABASE_URL"):
             st.warning("⚠️ Atenção: 'DATABASE_URL' não encontrada. O banco na nuvem não funcionará.")
             
@@ -118,7 +118,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- CAMADA DE PERSISTÊNCIA (POSTGRESQL - NUVEM) ---
-# ALTERADO: Esta classe inteira foi adaptada para PostgreSQL
 class CloudTransactionDAO:
     """
     Gerenciador de Banco de Dados Híbrido:
@@ -127,7 +126,6 @@ class CloudTransactionDAO:
     """
     
     def __init__(self):
-        # Não precisamos mais de db_name local
         self.init_db()
 
     def get_connection(self):
@@ -153,7 +151,7 @@ class CloudTransactionDAO:
                         );
                     """)
                     
-                    # Tabela de Transações (SERIAL substitui AUTOINCREMENT)
+                    # Tabela de Transações
                     cursor.execute("""
                         CREATE TABLE IF NOT EXISTS transactions (
                             id SERIAL PRIMARY KEY,
@@ -179,7 +177,6 @@ class CloudTransactionDAO:
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    # Postgres usa %s no lugar de ?
                     cursor.execute(
                         "INSERT INTO users (username, password_hash, created_at) VALUES (%s, %s, %s)",
                         (username, pwd_hash, str(datetime.now()))
@@ -210,7 +207,6 @@ class CloudTransactionDAO:
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    # Postgres usa %s no lugar de ?
                     cursor.execute("""
                         INSERT INTO transactions (user_id, date, amount, category, description, type)
                         VALUES (%s, %s, %s, %s, %s, %s)
@@ -223,7 +219,6 @@ class CloudTransactionDAO:
     def fetch_all(self, user_id):
         try:
             with self.get_connection() as conn:
-                # Pandas lê direto do Postgres
                 df = pd.read_sql_query(
                     "SELECT * FROM transactions WHERE user_id = %s ORDER BY date DESC, id DESC", 
                     conn, 
@@ -245,7 +240,7 @@ class CloudTransactionDAO:
         except Exception:
             return False
 
-# ALTERADO: Instância Global agora usa a versão Cloud
+# Instância Global
 db_manager = CloudTransactionDAO()
 
 # --- SERVIÇO DE DADOS DE MERCADO ---
@@ -333,7 +328,6 @@ def render_market_ticker():
     with c_header:
         st.title(f"📊 SmartWallet | {datetime.now(fuso_br).strftime('%d/%m/%Y')}")
     with c_meta:
-        # ALTERADO: Pequeno indicador visual de que a nuvem está ativa
         status_color = "🟢" if current_data['status'] == "online" else "🔴"
         st.caption(f"{status_color} Feed: {current_data['status'].upper()} | ☁️ Nuvem Conectada")
 
@@ -360,8 +354,6 @@ def render_market_ticker():
 def login_flow():
     """
     Gerencia a interface de Login/Registro.
-    As Keys foram alteradas (v_secure) para impedir o autocomplete do navegador
-    de sobrepor os campos, corrigindo o problema visual.
     """
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
@@ -385,9 +377,7 @@ def login_flow():
 
         # ABA: LOGIN
         with tab_login:
-            # clear_on_submit ajuda a limpar o formulário e evitar cache
             with st.form("login_form", clear_on_submit=True):
-                # KEY ÚNICA NOVA: 'access_code_secure' evita sugestões antigas do navegador
                 user_login = st.text_input("Usuário", placeholder="Seu nome de usuário", key="access_code_secure")
                 pass_login = st.text_input("Senha", type="password", placeholder="Sua senha secreta", key="pass_code_secure")
                 submit_login = st.form_submit_button("Acessar Painel", type="primary", use_container_width=True)
@@ -406,7 +396,6 @@ def login_flow():
         with tab_register:
             with st.form("register_form", clear_on_submit=True):
                 st.info("Crie um usuário único para proteger seus dados na nuvem.")
-                # KEY ÚNICA NOVA: 'new_registry_secure' evita sugestões antigas
                 new_user = st.text_input("Escolha um Usuário", placeholder="Ex: fernando.silva", key="new_registry_secure")
                 new_pass = st.text_input("Escolha uma Senha", type="password", key="new_registry_pass_secure")
                 new_pass_confirm = st.text_input("Confirme a Senha", type="password", key="new_registry_pass_conf_secure")
@@ -424,15 +413,14 @@ def login_flow():
                         else:
                             st.error(message)
 
-    # Bloqueia a execução se não estiver logado
     st.stop()
 
 # --- EXECUÇÃO PRINCIPAL (APP) ---
 def main():
-    # 1. Verifica autenticação antes de tudo
+    # 1. Verifica autenticação
     current_user = login_flow()
 
-    # 2. Barra lateral logada (aparece apenas após o login)
+    # 2. Barra lateral
     with st.sidebar:
         st.header("👤 Perfil")
         st.success(f"Usuário: **{current_user}**")
@@ -443,7 +431,7 @@ def main():
         st.divider()
         st.info("✅ PostgreSQL Conectado")
 
-    # 3. Renderiza o Ticker de Mercado e o restante do App
+    # 3. Ticker
     render_market_ticker()
     st.divider()
 
@@ -455,7 +443,6 @@ def main():
     # 1. INPUT NLP
     with tabs[0]:
         st.markdown(f"#### 🗣️ Olá, {current_user}! O que vamos registrar hoje?")
-        # Aqui NÃO alterei a Key ou deixei sem Key padrão para manter seu histórico de transações
         with st.form("nlp_form", clear_on_submit=True):
             user_input = st.text_input(
                 "Descreva sua movimentação:", 
@@ -469,6 +456,11 @@ def main():
                 if "error" in result:
                     st.error(result["error"])
                 else:
+                    # [MODIFICAÇÃO 1] ADICIONAR HORA SE A IA DEVOLVEU SÓ A DATA
+                    if len(result['date']) == 10:
+                        hora_atual = datetime.now(fuso_br).strftime('%H:%M:%S')
+                        result['date'] = f"{result['date']} {hora_atual}"
+
                     saved = db_manager.insert_transaction(
                         current_user, result['date'], result['amount'], result['category'], result['description'], result['type']
                     )
@@ -550,8 +542,12 @@ def main():
     with tabs[4]:
         df = db_manager.fetch_all(current_user)
         if not df.empty:
+            # [MODIFICAÇÃO 2] FORMATAÇÃO DE DATA E HORA
+            df['date'] = pd.to_datetime(df['date'])
+            df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
+
             display_df = df.rename(columns={
-                'date': 'Data', 'amount': 'Valor', 'category': 'Categoria', 
+                'amount': 'Valor', 'category': 'Categoria', 
                 'description': 'Descrição', 'type': 'Tipo'
             })[['Data', 'Tipo', 'Categoria', 'Descrição', 'Valor']]
             
