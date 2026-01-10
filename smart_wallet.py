@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.5.0 (AwesomeAPI Real-Time & Mini Charts)
+Version: 4.5.1 (Fix HTML Rendering Bug)
 """
 
 import streamlit as st
@@ -269,12 +269,8 @@ def get_svg_chart(is_up):
         points = "0,20 20,40 40,30 60,70 80,60 100,90"
         area_points = "0,100 0,20 20,40 40,30 60,70 80,60 100,90 100,100"
 
-    svg = f"""
-    <svg viewBox="0 0 100 100" class="chart-bg" preserveAspectRatio="none">
-        <polygon points="{area_points}" fill="{fill_color}" />
-        <polyline points="{points}" fill="none" stroke="{color}" stroke-width="3" vector-effect="non-scaling-stroke"/>
-    </svg>
-    """
+    # [CORREÇÃO] Removemos a indentação para evitar que o Markdown ache que é código
+    svg = f'<svg viewBox="0 0 100 100" class="chart-bg" preserveAspectRatio="none"><polygon points="{area_points}" fill="{fill_color}" /><polyline points="{points}" fill="none" stroke="{color}" stroke-width="3" vector-effect="non-scaling-stroke"/></svg>'
     return svg
 
 # --- NLP ---
@@ -311,7 +307,7 @@ def generate_financial_report(df):
         return "Serviço indisponível."
 
 # --- UI TICKER (COM GRÁFICOS) ---
-@st.fragment(run_every=15) # Atualiza a cada 15s para ser real-time
+@st.fragment(run_every=15)
 def render_market_ticker():
     if 'market_cache' not in st.session_state:
         st.session_state['market_cache'] = fetch_market_data()
@@ -332,25 +328,26 @@ def render_market_ticker():
     for idx, (symbol, label) in enumerate(assets):
         curr_val = current_data.get(symbol, 0.0)
         
-        # Lógica de Tendência (Pega da API 'varBid' ou compara com anterior)
-        # Se variação > 0 é subida (Verde), se < 0 é descida (Vermelho)
+        # Lógica de Tendência
         variation = current_data.get("variations", {}).get(symbol, 0.0)
         is_up = variation >= 0
         
         trend_class = "trend-up" if is_up else "trend-down"
         icon = "▲" if is_up else "▼"
-        svg_bg = get_svg_chart(is_up) # Gera o gráfico SVG
+        svg_bg = get_svg_chart(is_up)
             
         with cols[idx]:
-            st.markdown(f"""
-            <div class="market-card">
-                {svg_bg}
-                <div class="card-content">
-                    <div class="label-coin">{label} ({symbol})</div>
-                    <div class="value-coin {trend_class}">R$ {curr_val:,.2f} {icon}</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            # [CORREÇÃO] Removemos a indentação do HTML para o Streamlit renderizar corretamente
+            html_content = f"""
+<div class="market-card">
+    {svg_bg}
+    <div class="card-content">
+        <div class="label-coin">{label} ({symbol})</div>
+        <div class="value-coin {trend_class}">R$ {curr_val:,.2f} {icon}</div>
+    </div>
+</div>
+"""
+            st.markdown(html_content, unsafe_allow_html=True)
 
 # --- LOGIN FLOW ---
 def login_flow():
@@ -468,6 +465,7 @@ def main():
     with tabs[4]:
         df = db_manager.fetch_all(user)
         if not df.empty:
+            # Formatação visual na TELA
             df['date'] = pd.to_datetime(df['date'])
             df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
             
