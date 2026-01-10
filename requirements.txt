@@ -5,3 +5,4 @@ plotly
 requests
 pytz
 psycopg2-binary
+openpyxl
