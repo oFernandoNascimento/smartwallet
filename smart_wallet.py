@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.2.2 (Fix NameError Bug & Excel)
+Version: 4.3.0 (Excel .XLSX Export)
 """
 
 import streamlit as st
@@ -18,7 +18,8 @@ import re
 import time
 import pytz
 import hashlib
-import psycopg2 # Conector PostgreSQL
+import psycopg2 
+import io # [NOVO] Necessário para criar o arquivo Excel na memória
 from datetime import datetime
 
 # --- CONFIGURAÇÃO GLOBAL DE FUSO HORÁRIO ---
@@ -34,9 +35,6 @@ st.set_page_config(
 
 # --- GERENCIAMENTO DE CREDENCIAIS E SEGURANÇA ---
 def configure_api():
-    """
-    Configura a conexão com a API de LLM utilizando variáveis de ambiente seguras.
-    """
     try:
         api_key = st.secrets.get("GEMINI_KEY")
         if not api_key:
@@ -44,7 +42,6 @@ def configure_api():
         else:
             genai.configure(api_key=api_key)
             
-        # Verificação extra para o Banco de Dados
         if not st.secrets.get("DATABASE_URL"):
             st.warning("⚠️ Atenção: 'DATABASE_URL' não encontrada. O banco na nuvem não funcionará.")
             
@@ -54,12 +51,9 @@ def configure_api():
 
 configure_api()
 
-# --- ESTILIZAÇÃO CSS (INTERFACE MODERNA & LOGIN) ---
+# --- ESTILIZAÇÃO CSS ---
 st.markdown("""
     <style>
-    /* =========================================
-       ESTILOS DA TELA DE LOGIN
-       ========================================= */
     .login-container {
         background-color: #1E1E1E;
         padding: 40px;
@@ -76,26 +70,8 @@ st.markdown("""
         margin-bottom: 10px;
         font-family: 'Roboto', sans-serif;
     }
-    .login-sub {
-        font-size: 14px;
-        color: #aaa;
-        margin-bottom: 30px;
-    }
+    .login-sub { font-size: 14px; color: #aaa; margin-bottom: 30px; }
     
-    /* =========================================
-       ESTILOS ORIGINAIS DO APP
-       ========================================= */
-    @keyframes blink-up {
-        0% { background-color: #0E1117; border-color: #444; }
-        50% { background-color: rgba(76, 175, 80, 0.15); border-color: #4CAF50; transform: scale(1.01); }
-        100% { background-color: #0E1117; border-color: #444; }
-    }
-    @keyframes blink-down {
-        0% { background-color: #0E1117; border-color: #444; }
-        50% { background-color: rgba(244, 67, 54, 0.15); border-color: #F44336; transform: scale(1.01); }
-        100% { background-color: #0E1117; border-color: #444; }
-    }
-
     .market-card { 
         background-color: #0E1117; 
         border: 1px solid #333; 
@@ -114,35 +90,35 @@ st.markdown("""
     .trend-flat { color: #E0E0E0; }
     
     div[data-testid="stMetricValue"] { font-size: 24px; }
+    
+    @keyframes blink-up {
+        0% { background-color: #0E1117; border-color: #444; }
+        50% { background-color: rgba(76, 175, 80, 0.15); border-color: #4CAF50; transform: scale(1.01); }
+        100% { background-color: #0E1117; border-color: #444; }
+    }
+    @keyframes blink-down {
+        0% { background-color: #0E1117; border-color: #444; }
+        50% { background-color: rgba(244, 67, 54, 0.15); border-color: #F44336; transform: scale(1.01); }
+        100% { background-color: #0E1117; border-color: #444; }
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- CAMADA DE PERSISTÊNCIA (POSTGRESQL - NUVEM) ---
+# --- CAMADA DE PERSISTÊNCIA (CLOUD) ---
 class CloudTransactionDAO:
-    """
-    Gerenciador de Banco de Dados Híbrido:
-    1. Gerencia Usuários (Criptografia SHA-256)
-    2. Gerencia Transações Financeiras (Na Nuvem/Supabase)
-    """
-    
     def __init__(self):
         self.init_db()
 
     def get_connection(self):
-        """Estabelece conexão com o Supabase via URL"""
         return psycopg2.connect(st.secrets["DATABASE_URL"])
 
     def _hash_password(self, password):
-        """Cria hash da senha para segurança"""
         return hashlib.sha256(password.encode()).hexdigest()
 
     def init_db(self):
-        """Inicializa as tabelas de Usuários e Transações"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cursor:
-                    
-                    # Tabela de Usuários
                     cursor.execute("""
                         CREATE TABLE IF NOT EXISTS users (
                             username TEXT PRIMARY KEY,
@@ -150,8 +126,6 @@ class CloudTransactionDAO:
                             created_at TEXT
                         );
                     """)
-                    
-                    # Tabela de Transações
                     cursor.execute("""
                         CREATE TABLE IF NOT EXISTS transactions (
                             id SERIAL PRIMARY KEY,
@@ -168,11 +142,9 @@ class CloudTransactionDAO:
         except Exception as e:
             st.error(f"Erro Crítico de Banco de Dados: {e}")
 
-    # --- MÉTODOS DE AUTENTICAÇÃO ---
     def create_user(self, username, password):
         if not username or not password:
             return False, "Usuário e senha são obrigatórios."
-            
         pwd_hash = self._hash_password(password)
         try:
             with self.get_connection() as conn:
@@ -182,7 +154,7 @@ class CloudTransactionDAO:
                         (username, pwd_hash, str(datetime.now()))
                     )
                     conn.commit()
-            return True, "Conta criada com sucesso! Faça login."
+            return True, "Conta criada com sucesso!"
         except psycopg2.IntegrityError:
             return False, "Este nome de usuário já está em uso."
         except Exception as e:
@@ -197,12 +169,10 @@ class CloudTransactionDAO:
                         "SELECT username FROM users WHERE username = %s AND password_hash = %s", 
                         (username, pwd_hash)
                     )
-                    user = cursor.fetchone()
-                return user is not None
+                    return cursor.fetchone() is not None
         except Exception:
             return False
 
-    # --- MÉTODOS FINANCEIROS ---
     def insert_transaction(self, user_id, date, amount, category, description, type_):
         try:
             with self.get_connection() as conn:
@@ -240,50 +210,36 @@ class CloudTransactionDAO:
         except Exception:
             return False
 
-# Instância Global
 db_manager = CloudTransactionDAO()
 
-# --- SERVIÇO DE DADOS DE MERCADO ---
+# --- DADOS DE MERCADO ---
 def fetch_market_data():
     headers = {"User-Agent": "Mozilla/5.0"}
-    market_data = {
-        "USD": 5.39, "EUR": 6.28, "GBP": 7.24, "BTC": 490775.00, "status": "offline" 
-    }
+    market_data = {"USD": 5.39, "EUR": 6.28, "GBP": 7.24, "BTC": 490775.00, "status": "offline"}
     try:
-        resp_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=2)
-        if resp_usd.status_code == 200:
-            market_data["USD"] = float(resp_usd.json()['rates']['BRL'])
+        resp = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=2)
+        if resp.status_code == 200:
+            market_data["USD"] = float(resp.json()['rates']['BRL'])
             market_data["status"] = "online"
         
-        # Warm-up calls
         requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=1)
         requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=1)
         
         resp_btc = requests.get("https://economia.awesomeapi.com.br/last/BTC-BRL", headers=headers, timeout=2)
         if resp_btc.status_code == 200:
-            btc_val = resp_btc.json()['BTCBRL']['bid']
-            market_data["BTC"] = float(btc_val)
+            market_data["BTC"] = float(resp_btc.json()['BTCBRL']['bid'])
     except Exception:
         pass
     return market_data
 
-# --- PROCESSAMENTO DE LINGUAGEM NATURAL (NLP) ---
+# --- NLP ---
 def process_natural_language_input(text, market_data):
     prompt = f"""
     Role: Financial Data Parser.
     Context Date: {datetime.now(fuso_br).strftime('%Y-%m-%d')}
     User Input: "{text}"
     Reference Rates: USD={market_data['USD']}, EUR={market_data['EUR']}, GBP={market_data['GBP']}, BTC={market_data['BTC']}
-    
-    Task:
-    1. Identify transaction type ('Receita' or 'Despesa').
-    2. Convert foreign currencies to BRL using reference rates.
-    3. Format description in formal Portuguese (Capitalized).
-    4. If conversion occurs, append "(Orig: CURRENCY VALUE)" to description.
-    5. Calculate asset quantity if buying assets.
-    
-    Output Format (JSON Only):
-    {{ "amount": float, "category": "string", "date": "YYYY-MM-DD", "description": "string", "type": "Receita" or "Despesa" }}
+    Output JSON: {{ "amount": float, "category": "string", "date": "YYYY-MM-DD", "description": "string", "type": "Receita" or "Despesa" }}
     """
     models = ['gemini-2.5-flash', 'gemini-pro', 'gemini-1.5-flash']
     for model_name in models:
@@ -298,30 +254,25 @@ def process_natural_language_input(text, market_data):
                     return payload
         except Exception:
             continue
-    return {"error": "Não foi possível processar a solicitação no momento."}
+    return {"error": "Não foi possível processar."}
 
 def generate_financial_report(df):
-    if df.empty: return "Dados insuficientes para análise."
+    if df.empty: return "Dados insuficientes."
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = f"""
-        Analyst Role: Senior Financial Advisor.
-        Data Context: \n{df.to_string()}\n
-        Objective: Provide a formal financial assessment in Portuguese.
-        Structure: 1. Diagnóstico, 2. Gargalos, 3. Plano de Ação.
-        """
+        prompt = f"Analyst Role: Senior Financial Advisor.\nData Context: \n{df.to_string()}\nObjective: Provide a formal financial assessment in Portuguese."
         return model.generate_content(prompt).text
     except Exception:
-        return "Serviço de análise indisponível temporariamente."
+        return "Serviço indisponível."
 
-# --- COMPONENTES DE UI (TICKER) ---
+# --- UI TICKER ---
 @st.fragment(run_every=10)
 def render_market_ticker():
     if 'market_cache' not in st.session_state:
         st.session_state['market_cache'] = fetch_market_data()
     
-    previous_data = st.session_state['market_cache']
     current_data = fetch_market_data()
+    previous_data = st.session_state['market_cache']
     st.session_state['market_cache'] = current_data
     
     c_header, c_meta = st.columns([3, 1])
@@ -335,26 +286,21 @@ def render_market_ticker():
     assets = [("USD", "Dólar"), ("EUR", "Euro"), ("GBP", "Libra"), ("BTC", "Bitcoin")]
 
     for idx, (symbol, label) in enumerate(assets):
-        curr_val = current_data.get(symbol, 0)
-        prev_val = previous_data.get(symbol, 0)
+        curr = current_data.get(symbol, 0)
+        prev = previous_data.get(symbol, 0)
         
-        anim_class = "anim-up" if curr_val > prev_val else "anim-down" if curr_val < prev_val else ""
-        trend_class = "trend-up" if curr_val > prev_val else "trend-down" if curr_val < prev_val else "trend-flat"
-        icon = "▲" if curr_val > prev_val else "▼" if curr_val < prev_val else ""
-            
+        anim = "anim-up" if curr > prev else "anim-down" if curr < prev else ""
+        trend = "trend-up" if curr > prev else "trend-down" if curr < prev else "trend-flat"
+        
         with cols[idx]:
             st.markdown(f"""
-            <div class="market-card {anim_class}">
+            <div class="market-card {anim}">
                 <div class="label-coin">{label} ({symbol})</div>
-                <div class="value-coin {trend_class}">R$ {curr_val:,.2f} {icon}</div>
-            </div>
-            """, unsafe_allow_html=True)
+                <div class="value-coin {trend}">R$ {curr:,.2f}</div>
+            </div>""", unsafe_allow_html=True)
 
-# --- FUNÇÃO DE CONTROLE DE LOGIN (MANTIDA) ---
+# --- LOGIN FLOW ---
 def login_flow():
-    """
-    Gerencia a interface de Login/Registro.
-    """
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
         st.session_state['username'] = None
@@ -362,190 +308,117 @@ def login_flow():
     if st.session_state['logged_in']:
         return st.session_state['username']
 
-    # --- TELA DE LOGIN ---
     col1, col2, col3 = st.columns([1, 2, 1])
-    
     with col2:
         st.markdown("""
         <div class="login-container">
             <div class="login-header">🔐 SmartWallet Cloud</div>
-            <div class="login-sub">Gerenciamento financeiro seguro e na Nuvem</div>
-        </div>
-        """, unsafe_allow_html=True)
+            <div class="login-sub">Acesso Seguro & Criptografado</div>
+        </div>""", unsafe_allow_html=True)
 
-        tab_login, tab_register = st.tabs(["🔑 Entrar na Conta", "📝 Criar Nova Conta"])
-
-        # ABA: LOGIN
-        with tab_login:
-            with st.form("login_form", clear_on_submit=True):
-                user_login = st.text_input("Usuário", placeholder="Seu nome de usuário", key="access_code_secure")
-                pass_login = st.text_input("Senha", type="password", placeholder="Sua senha secreta", key="pass_code_secure")
-                submit_login = st.form_submit_button("Acessar Painel", type="primary", use_container_width=True)
-
-                if submit_login:
-                    if db_manager.verify_login(user_login, pass_login):
+        tab1, tab2 = st.tabs(["Entrar", "Criar Conta"])
+        with tab1:
+            with st.form("login"):
+                u = st.text_input("Usuário", key="u_log")
+                p = st.text_input("Senha", type="password", key="p_log")
+                if st.form_submit_button("Acessar", type="primary", use_container_width=True):
+                    if db_manager.verify_login(u, p):
                         st.session_state['logged_in'] = True
-                        st.session_state['username'] = user_login
-                        st.toast(f"Bem-vindo de volta, {user_login}!", icon="🎉")
-                        time.sleep(1)
+                        st.session_state['username'] = u
                         st.rerun()
                     else:
-                        st.error("Usuário ou senha incorretos.")
-
-        # ABA: REGISTRO
-        with tab_register:
-            with st.form("register_form", clear_on_submit=True):
-                st.info("Crie um usuário único para proteger seus dados na nuvem.")
-                new_user = st.text_input("Escolha um Usuário", placeholder="Ex: fernando.silva", key="new_registry_secure")
-                new_pass = st.text_input("Escolha uma Senha", type="password", key="new_registry_pass_secure")
-                new_pass_confirm = st.text_input("Confirme a Senha", type="password", key="new_registry_pass_conf_secure")
-                submit_register = st.form_submit_button("Criar Conta", use_container_width=True)
-
-                if submit_register:
-                    if new_pass != new_pass_confirm:
-                        st.error("As senhas não coincidem.")
-                    elif len(new_pass) < 4:
-                        st.warning("A senha deve ter pelo menos 4 caracteres.")
-                    else:
-                        success, message = db_manager.create_user(new_user, new_pass)
-                        if success:
-                            st.success(message)
-                        else:
-                            st.error(message)
-
+                        st.error("Dados incorretos.")
+        with tab2:
+            with st.form("register"):
+                u = st.text_input("Novo Usuário", key="u_reg")
+                p = st.text_input("Senha", type="password", key="p_reg")
+                if st.form_submit_button("Criar Conta", use_container_width=True):
+                    ok, msg = db_manager.create_user(u, p)
+                    if ok: st.success(msg)
+                    else: st.error(msg)
     st.stop()
 
-# --- EXECUÇÃO PRINCIPAL (APP) ---
+# --- APP MAIN ---
 def main():
-    # 1. Verifica autenticação
-    current_user = login_flow()
+    user = login_flow()
 
-    # 2. Barra lateral
     with st.sidebar:
         st.header("👤 Perfil")
-        st.success(f"Usuário: **{current_user}**")
-        if st.button("Sair / Logout", type="secondary"):
+        st.success(f"Logado: **{user}**")
+        if st.button("Sair"):
             st.session_state['logged_in'] = False
-            st.session_state['username'] = None
             st.rerun()
         st.divider()
-        st.info("✅ PostgreSQL Conectado")
+        st.info("✅ DB: PostgreSQL")
 
-    # 3. Ticker
     render_market_ticker()
     st.divider()
 
-    current_market = st.session_state.get('market_cache', fetch_market_data())
+    market = st.session_state.get('market_cache', fetch_market_data())
+    tabs = st.tabs(["🤖 Input IA", "✍️ Manual", "📈 Dashboard", "💰 Investimentos", "📑 Extrato Detalhado", "🧠 Consultor"])
 
-    # Abas Principais
-    tabs = st.tabs(["🤖 Input Inteligente", "✍️ Registro Manual", "📈 Analytics", "💰 Investimentos", "📑 Extrato", "🧠 Consultoria"])
-
-    # 1. INPUT NLP
+    # 1. NLP
     with tabs[0]:
-        st.markdown(f"#### 🗣️ Olá, {current_user}! O que vamos registrar hoje?")
-        with st.form("nlp_form", clear_on_submit=True):
-            user_input = st.text_input(
-                "Descreva sua movimentação:", 
-                placeholder="Ex: Gastei 20 na farmácia, Recebi 1500 de salário ou Comprei 1500 reais em Bitcoin"
-            )
-            submitted = st.form_submit_button("Processar via Inteligência Artificial")
-        
-        if submitted and user_input:
-            with st.spinner("A IA está analisando sua transação..."):
-                result = process_natural_language_input(user_input, current_market)
-                if "error" in result:
-                    st.error(result["error"])
-                else:
-                    # [MODIFICAÇÃO 1] ADICIONAR HORA SE A IA DEVOLVEU SÓ A DATA
-                    if len(result['date']) == 10:
-                        hora_atual = datetime.now(fuso_br).strftime('%H:%M:%S')
-                        result['date'] = f"{result['date']} {hora_atual}"
+        with st.form("nlp"):
+            txt = st.text_input("Descreva a transação:")
+            if st.form_submit_button("Processar") and txt:
+                with st.spinner("Processando..."):
+                    res = process_natural_language_input(txt, market)
+                    if "error" not in res:
+                        if len(res['date']) == 10:
+                            res['date'] += f" {datetime.now(fuso_br).strftime('%H:%M:%S')}"
+                        
+                        db_manager.insert_transaction(user, res['date'], res['amount'], res['category'], res['description'], res['type'])
+                        st.success(f"Salvo: {res['description']} (R$ {res['amount']})")
+                    else:
+                        st.error(res['error'])
 
-                    saved = db_manager.insert_transaction(
-                        current_user, result['date'], result['amount'], result['category'], result['description'], result['type']
-                    )
-                    if saved:
-                        msg_type = "Receita" if result['type'] == 'Receita' else "Despesa"
-                        st.success(f"{msg_type} identificada: R$ {result['amount']:.2f} ({result['description']})")
-
-    # 2. INPUT MANUAL
+    # 2. Manual
     with tabs[1]:
-        st.markdown("#### Registro Estruturado")
-        col_type, col_val = st.columns([1, 2])
-        trans_type = col_type.radio("Tipo:", ["Receita", "Despesa"], horizontal=True)
-        
-        categories = ["Salário", "Investimentos", "Outros"] if trans_type == "Receita" else \
-                     ["Alimentação", "Moradia", "Transporte", "Lazer", "Educação", "Saúde", "Investimentos", "Serviços", "Outros"]
-        
-        amount = col_val.number_input("Valor (BRL)", min_value=0.0, step=10.0, format="%.2f")
-        category = st.selectbox("Categoria", categories)
-        desc = st.text_input("Descrição", placeholder="Detalhes opcionais")
-        
-        if st.button("Salvar Registro"):
-            if amount > 0:
-                db_manager.insert_transaction(current_user, datetime.now(fuso_br), amount, category, desc or category, trans_type)
-                st.success("Registro salvo com sucesso.")
-            else:
-                st.warning("O valor deve ser positivo.")
+        c1, c2 = st.columns(2)
+        tipo = c1.radio("Tipo", ["Receita", "Despesa"], horizontal=True)
+        valor = c2.number_input("Valor", min_value=0.01)
+        cat = st.selectbox("Categoria", ["Alimentação", "Transporte", "Lazer", "Salário", "Investimentos", "Outros"])
+        desc = st.text_input("Descrição")
+        if st.button("Salvar"):
+            db_manager.insert_transaction(user, datetime.now(fuso_br), valor, cat, desc or cat, tipo)
+            st.success("Registro Salvo!")
 
-    # 3. ANALYTICS (DASHBOARD)
+    # 3. Dashboard
     with tabs[2]:
-        df = db_manager.fetch_all(current_user)
+        df = db_manager.fetch_all(user)
         if not df.empty:
-            income = df[df['type'] == 'Receita']['amount'].sum()
-            expense = df[df['type'] == 'Despesa']['amount'].sum()
-            balance = income - expense
-            
+            inc = df[df['type']=='Receita']['amount'].sum()
+            exp = df[df['type']=='Despesa']['amount'].sum()
             c1, c2, c3 = st.columns(3)
-            c1.metric("Entradas Totais", f"R$ {income:,.2f}")
-            c2.metric("Saídas Totais", f"R$ {expense:,.2f}")
-            c3.metric("Saldo Líquido", f"R$ {balance:,.2f}", delta="Positivo" if balance >= 0 else "Negativo")
+            c1.metric("Entradas", f"R$ {inc:,.2f}")
+            c2.metric("Saídas", f"R$ {exp:,.2f}")
+            c3.metric("Saldo", f"R$ {inc-exp:,.2f}")
             
-            st.divider()
-            
-            st.subheader("Análise de Despesas por Categoria")
-            expense_data = df[df['type'] == 'Despesa'].groupby("category")['amount'].sum().reset_index()
-            
-            if not expense_data.empty:
-                fig = px.pie(expense_data, values='amount', names='category', 
-                             color_discrete_sequence=px.colors.qualitative.Prism,
-                             hole=0.4)
-                fig.update_traces(textposition='outside', textinfo='percent+label')
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("Sem dados de despesa para visualização.")
+            fig = px.pie(df[df['type']=='Despesa'], values='amount', names='category', hole=0.4)
+            st.plotly_chart(fig, use_container_width=True)
         else:
-            st.warning("Aguardando dados para gerar visualizações.")
+            st.info("Sem dados.")
 
-    # 4. INVESTIMENTOS
+    # 4. Investimentos
     with tabs[3]:
-        st.subheader("Carteira de Investimentos")
-        df = db_manager.fetch_all(current_user)
-        
+        df = db_manager.fetch_all(user)
         if not df.empty:
-            invest_df = df[df['category'].isin(['Investimentos', 'Investimento'])]
-            
-            if not invest_df.empty:
-                total_invested = invest_df['amount'].sum()
-                st.metric("Total Investido", f"R$ {total_invested:,.2f}")
-                
-                grouped_invest = invest_df.groupby('description')['amount'].sum().reset_index().sort_values(by='amount', ascending=False)
-                grouped_invest.columns = ['Ativo / Descrição', 'Valor Total (R$)']
-                
-                st.table(grouped_invest.style.format({'Valor Total (R$)': 'R$ {:,.2f}'}))
+            inv = df[df['category'].isin(['Investimentos', 'Investimento'])]
+            if not inv.empty:
+                st.metric("Total Investido", f"R$ {inv['amount'].sum():,.2f}")
+                st.dataframe(inv[['date', 'description', 'amount']], use_container_width=True)
             else:
-                st.info("Nenhum registro classificado como 'Investimentos' encontrado.")
-        else:
-            st.warning("Sem dados.")
+                st.info("Nenhum investimento encontrado.")
 
-    # 5. EXTRATO (COM DOWNLOAD CSV FIXADO)
+    # 5. EXTRATO (COM EXPORTAÇÃO EXCEL VERDADEIRO)
     with tabs[4]:
-        df = db_manager.fetch_all(current_user)
+        df = db_manager.fetch_all(user)
         if not df.empty:
-            # [MODIFICAÇÃO 2] FORMATAÇÃO DE DATA E HORA (MANTIDA)
+            # Formatação visual na TELA
             df['date'] = pd.to_datetime(df['date'])
             df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
-
+            
             display_df = df.rename(columns={
                 'amount': 'Valor', 'category': 'Categoria', 
                 'description': 'Descrição', 'type': 'Tipo'
@@ -559,21 +432,22 @@ def main():
                 styler.format({'Valor': 'R$ {:,.2f}'})
                 return styler
 
-            # [CORREÇÃO FINAL]: Chamando 'apply_style' com o nome correto!
             st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
             
-            # --- NOVIDADE: BOTÃO DE DOWNLOAD (Fix Acentos e Colunas para Excel BR) ---
+            # --- NOVIDADE: BOTÃO DE DOWNLOAD EXCEL REAL (.XLSX) ---
             st.divider()
             col_d1, col_d2 = st.columns([1, 4])
             with col_d1:
-                # [CORREÇÃO] SEP=';' para colunas, DECIMAL=',' e UTF-8-SIG para acentos
-                csv = df.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig')
+                # Geração de Excel real em memória
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Extrato')
                 
                 st.download_button(
-                    label="📥 Baixar CSV",
-                    data=csv,
-                    file_name=f"extrato_smartwallet_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
+                    label="📥 Baixar Excel",
+                    data=buffer.getvalue(),
+                    file_name=f"extrato_smartwallet_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True
                 )
             with col_d2:
@@ -584,29 +458,14 @@ def main():
                     except Exception as e:
                         st.error(f"Erro ao reiniciar: {e}")
 
-    # 6. CONSULTORIA
+    # 6. Consultor
     with tabs[5]:
-        st.markdown("#### Consultoria Financeira Avançada")
-        if st.button("Solicitar Diagnóstico"):
-            df = db_manager.fetch_all(current_user)
+        if st.button("Gerar Análise"):
+            df = db_manager.fetch_all(user)
             if not df.empty:
-                with st.spinner("Gerando análise..."):
-                    report = generate_financial_report(df)
-                    st.markdown("---")
-                    st.markdown(report)
+                st.write(generate_financial_report(df))
             else:
-                st.warning("É necessário histórico financeiro para esta análise.")
-    
-    # --- RODAPÉ DE COPYRIGHT ---
-    st.markdown("---")
-    st.markdown(
-        """
-        <div style='text-align: center; color: #666; font-size: 12px; margin-top: 20px;'>
-            © 2026 SmartWallet Portfolio. Developed by Fernando Teixeira do Nascimento. All rights reserved.
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+                st.warning("Sem dados.")
 
 if __name__ == "__main__":
     main()
