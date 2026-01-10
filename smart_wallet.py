@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.3.2 (Excel Formatted R$)
+Version: 4.4.0 (Real-Time Currency Update Fix)
 """
 
 import streamlit as st
@@ -212,24 +212,37 @@ class CloudTransactionDAO:
 
 db_manager = CloudTransactionDAO()
 
-# --- DADOS DE MERCADO ---
+# --- DADOS DE MERCADO (ATUALIZAÇÃO REAL) ---
 def fetch_market_data():
     headers = {"User-Agent": "Mozilla/5.0"}
+    # Valores padrão caso a API falhe
     market_data = {"USD": 5.39, "EUR": 6.28, "GBP": 7.24, "BTC": 490775.00, "status": "offline"}
+    
     try:
-        resp = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=2)
-        if resp.status_code == 200:
-            market_data["USD"] = float(resp.json()['rates']['BRL'])
+        # 1. Dólar (USD)
+        resp_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=2)
+        if resp_usd.status_code == 200:
+            market_data["USD"] = float(resp_usd.json()['rates']['BRL'])
             market_data["status"] = "online"
         
-        requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=1)
-        requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=1)
+        # 2. Euro (EUR) - Agora atualiza de verdade
+        resp_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=2)
+        if resp_eur.status_code == 200:
+            market_data["EUR"] = float(resp_eur.json()['rates']['BRL'])
+            
+        # 3. Libra (GBP) - Agora atualiza de verdade
+        resp_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=2)
+        if resp_gbp.status_code == 200:
+            market_data["GBP"] = float(resp_gbp.json()['rates']['BRL'])
         
+        # 4. Bitcoin (BTC)
         resp_btc = requests.get("https://economia.awesomeapi.com.br/last/BTC-BRL", headers=headers, timeout=2)
         if resp_btc.status_code == 200:
             market_data["BTC"] = float(resp_btc.json()['BTCBRL']['bid'])
+            
     except Exception:
-        pass
+        pass # Mantém os valores padrão/antigos se der erro de conexão
+        
     return market_data
 
 # --- NLP ---
@@ -440,9 +453,9 @@ def main():
             with col_d1:
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    # [MUDANÇA] Criamos uma cópia do display_df para formatar o valor como R$ 2.500,00
+                    # Copia para formatar valor
                     df_export = display_df.copy()
-                    # Mágica: Transforma número em texto formatado para o Excel
+                    # Formata coluna Valor para R$ X.XXX,XX
                     df_export['Valor'] = df_export['Valor'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                     
                     df_export.to_excel(writer, index=False, sheet_name='Extrato')
