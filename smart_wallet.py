@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.10.2 (Fix NameError Bug)
+Version: 4.11.0 (Fix: Clear Data Bug & Robust Online Feed)
 """
 
 import streamlit as st
@@ -224,7 +224,7 @@ class CloudTransactionDAO:
 
 db_manager = CloudTransactionDAO()
 
-# --- DADOS DE MERCADO (AWESOME API + BACKUP EXATO) ---
+# --- DADOS DE MERCADO (ROBUSTO: AWESOME + FRANKFURTER) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_data():
     market_data = {
@@ -233,6 +233,7 @@ def fetch_market_data():
     headers = {"User-Agent": "Mozilla/5.0"}
     timeout_val = 5
 
+    # 1. Tenta AwesomeAPI (Brasil)
     try:
         url_fiat = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL"
         resp_fiat = requests.get(url_fiat, headers=headers, timeout=timeout_val)
@@ -242,12 +243,26 @@ def fetch_market_data():
             market_data["EUR"] = float(data['EURBRL']['bid'])
             market_data["GBP"] = float(data['GBPBRL']['bid'])
             market_data["status"] = "online"
+    except Exception:
+        # 2. Se falhar, tenta Frankfurter (Backup Europeu)
+        try:
+            r_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=timeout_val)
+            if r_usd.status_code == 200:
+                market_data["USD"] = r_usd.json()['rates']['BRL']
+                market_data["status"] = "online"
+            
+            requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=timeout_val)
+            requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=timeout_val)
+        except:
+            pass
 
+    # 3. Bitcoin (Mercado Bitcoin - Muito estável)
+    try:
         r_btc = requests.get("https://www.mercadobitcoin.net/api/BTC/ticker/", headers=headers, timeout=timeout_val)
         if r_btc.status_code == 200:
             market_data["BTC"] = float(r_btc.json()['ticker']['last'])
     except Exception:
-        pass 
+        pass
     
     return market_data
 
@@ -442,7 +457,6 @@ def main():
     with tabs[2]:
         df = db_manager.fetch_all(user)
         if not df.empty:
-            # [CORREÇÃO] Variáveis renomeadas corretamente
             inc = df[df['type'] == 'Receita']['amount'].sum()
             exp = df[df['type'] == 'Despesa']['amount'].sum()
             balance = inc - exp
@@ -520,9 +534,10 @@ def main():
                     use_container_width=True
                 )
             with col_d2:
+                # [CORREÇÃO]: current_user -> user
                 if st.button("⚠️ Apagar Todos os Meus Dados"):
                     try:
-                        db_manager.clear_data(current_user)
+                        db_manager.clear_data(user)
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao reiniciar: {e}")
