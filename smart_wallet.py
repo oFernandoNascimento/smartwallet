@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.4.0 (Real-Time Currency Update Fix)
+Version: 4.5.0 (AwesomeAPI Real-Time & Mini Charts)
 """
 
 import streamlit as st
@@ -19,7 +19,8 @@ import time
 import pytz
 import hashlib
 import psycopg2 
-import io # Necessário para criar o Excel na memória
+import io 
+import random
 from datetime import datetime
 
 # --- CONFIGURAÇÃO GLOBAL DE FUSO HORÁRIO ---
@@ -51,7 +52,7 @@ def configure_api():
 
 configure_api()
 
-# --- ESTILIZAÇÃO CSS ---
+# --- ESTILIZAÇÃO CSS (COM GRÁFICOS SVG DE FUNDO) ---
 st.markdown("""
     <style>
     .login-container {
@@ -63,44 +64,48 @@ st.markdown("""
         text-align: center;
         margin-bottom: 20px;
     }
-    .login-header {
-        font-size: 28px;
-        font-weight: bold;
-        color: #4CAF50;
-        margin-bottom: 10px;
-        font-family: 'Roboto', sans-serif;
-    }
+    .login-header { font-size: 28px; font-weight: bold; color: #4CAF50; margin-bottom: 10px; font-family: 'Roboto', sans-serif; }
     .login-sub { font-size: 14px; color: #aaa; margin-bottom: 30px; }
     
+    /* CARD COM GRÁFICO DE FUNDO */
     .market-card { 
         background-color: #0E1117; 
         border: 1px solid #333; 
-        border-radius: 8px; 
-        padding: 12px; 
+        border-radius: 12px; 
+        padding: 15px; 
         text-align: center;
-        transition: border-color 0.3s ease;
+        position: relative;
+        overflow: hidden; /* Impede o gráfico de sair da caixa */
+        height: 100px;
+        transition: transform 0.2s;
     }
-    .anim-up { animation: blink-up 1.2s ease-out; }
-    .anim-down { animation: blink-down 1.2s ease-out; }
+    .market-card:hover { transform: translateY(-2px); border-color: #555; }
+
+    /* Conteúdo do Card (Texto) fica na frente */
+    .card-content {
+        position: relative;
+        z-index: 2;
+    }
+
+    /* Gráfico SVG no fundo */
+    .chart-bg {
+        position: absolute;
+        bottom: -5px;
+        left: 0;
+        width: 100%;
+        height: 60%;
+        z-index: 1;
+        opacity: 0.25; /* Transparência para não atrapalhar o texto */
+    }
+
+    .label-coin { font-size: 12px; color: #ccc; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; font-weight: bold; }
+    .value-coin { font-size: 22px; font-weight: 700; font-family: 'Roboto Mono', monospace; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
     
-    .label-coin { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
-    .value-coin { font-size: 20px; font-weight: 600; font-family: 'Roboto Mono', monospace; }
     .trend-up { color: #4CAF50; }
     .trend-down { color: #F44336; }
     .trend-flat { color: #E0E0E0; }
     
     div[data-testid="stMetricValue"] { font-size: 24px; }
-    
-    @keyframes blink-up {
-        0% { background-color: #0E1117; border-color: #444; }
-        50% { background-color: rgba(76, 175, 80, 0.15); border-color: #4CAF50; transform: scale(1.01); }
-        100% { background-color: #0E1117; border-color: #444; }
-    }
-    @keyframes blink-down {
-        0% { background-color: #0E1117; border-color: #444; }
-        50% { background-color: rgba(244, 67, 54, 0.15); border-color: #F44336; transform: scale(1.01); }
-        100% { background-color: #0E1117; border-color: #444; }
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -212,38 +217,65 @@ class CloudTransactionDAO:
 
 db_manager = CloudTransactionDAO()
 
-# --- DADOS DE MERCADO (ATUALIZAÇÃO REAL) ---
+# --- DADOS DE MERCADO (AWESOME API - PRECISÃO GOOGLE) ---
 def fetch_market_data():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    # Valores padrão caso a API falhe
-    market_data = {"USD": 5.39, "EUR": 6.28, "GBP": 7.24, "BTC": 490775.00, "status": "offline"}
+    market_data = {"USD": 0, "EUR": 0, "GBP": 0, "BTC": 0, "status": "offline", "variations": {}}
     
     try:
-        # 1. Dólar (USD)
-        resp_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=2)
-        if resp_usd.status_code == 200:
-            market_data["USD"] = float(resp_usd.json()['rates']['BRL'])
-            market_data["status"] = "online"
+        # Busca TUDO em uma única chamada (Mais rápido e preciso)
+        url = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL"
+        resp = requests.get(url, timeout=3)
         
-        # 2. Euro (EUR) - Agora atualiza de verdade
-        resp_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=2)
-        if resp_eur.status_code == 200:
-            market_data["EUR"] = float(resp_eur.json()['rates']['BRL'])
+        if resp.status_code == 200:
+            data = resp.json()
+            # AwesomeAPI retorna: { 'USDBRL': { 'bid': '5.37', 'varBid': '0.01' } ... }
             
-        # 3. Libra (GBP) - Agora atualiza de verdade
-        resp_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=2)
-        if resp_gbp.status_code == 200:
-            market_data["GBP"] = float(resp_gbp.json()['rates']['BRL'])
-        
-        # 4. Bitcoin (BTC)
-        resp_btc = requests.get("https://economia.awesomeapi.com.br/last/BTC-BRL", headers=headers, timeout=2)
-        if resp_btc.status_code == 200:
-            market_data["BTC"] = float(resp_btc.json()['BTCBRL']['bid'])
+            market_data["USD"] = float(data['USDBRL']['bid'])
+            market_data["variations"]["USD"] = float(data['USDBRL']['varBid'])
+            
+            market_data["EUR"] = float(data['EURBRL']['bid'])
+            market_data["variations"]["EUR"] = float(data['EURBRL']['varBid'])
+            
+            market_data["GBP"] = float(data['GBPBRL']['bid'])
+            market_data["variations"]["GBP"] = float(data['GBPBRL']['varBid'])
+            
+            market_data["BTC"] = float(data['BTCBRL']['bid'])
+            market_data["variations"]["BTC"] = float(data['BTCBRL']['varBid'])
+            
+            market_data["status"] = "online"
             
     except Exception:
-        pass # Mantém os valores padrão/antigos se der erro de conexão
+        # Valores de fallback caso a API caia
+        market_data.update({"USD": 5.41, "EUR": 6.35, "GBP": 7.20, "BTC": 486000})
         
     return market_data
+
+# --- GERADOR DE GRÁFICO SVG (SPARKLINE) ---
+def get_svg_chart(is_up):
+    """
+    Gera um código SVG de um gráfico de linha.
+    Verde subindo se is_up=True, Vermelho descendo se is_up=False.
+    """
+    color = "#4CAF50" if is_up else "#F44336"
+    fill_color = "rgba(76, 175, 80, 0.2)" if is_up else "rgba(244, 67, 54, 0.2)"
+    
+    # Coordenadas do SVG (0 a 100)
+    if is_up:
+        # Começa baixo, termina alto
+        points = "0,80 20,60 40,70 60,30 80,40 100,10"
+        area_points = "0,100 0,80 20,60 40,70 60,30 80,40 100,10 100,100"
+    else:
+        # Começa alto, termina baixo
+        points = "0,20 20,40 40,30 60,70 80,60 100,90"
+        area_points = "0,100 0,20 20,40 40,30 60,70 80,60 100,90 100,100"
+
+    svg = f"""
+    <svg viewBox="0 0 100 100" class="chart-bg" preserveAspectRatio="none">
+        <polygon points="{area_points}" fill="{fill_color}" />
+        <polyline points="{points}" fill="none" stroke="{color}" stroke-width="3" vector-effect="non-scaling-stroke"/>
+    </svg>
+    """
+    return svg
 
 # --- NLP ---
 def process_natural_language_input(text, market_data):
@@ -254,7 +286,7 @@ def process_natural_language_input(text, market_data):
     Reference Rates: USD={market_data['USD']}, EUR={market_data['EUR']}, GBP={market_data['GBP']}, BTC={market_data['BTC']}
     Output JSON: {{ "amount": float, "category": "string", "date": "YYYY-MM-DD", "description": "string", "type": "Receita" or "Despesa" }}
     """
-    models = ['gemini-2.5-flash', 'gemini-pro', 'gemini-1.5-flash']
+    models = ['gemini-2.5-flash', 'gemini-pro']
     for model_name in models:
         try:
             model = genai.GenerativeModel(model_name)
@@ -278,14 +310,13 @@ def generate_financial_report(df):
     except Exception:
         return "Serviço indisponível."
 
-# --- UI TICKER ---
-@st.fragment(run_every=10)
+# --- UI TICKER (COM GRÁFICOS) ---
+@st.fragment(run_every=15) # Atualiza a cada 15s para ser real-time
 def render_market_ticker():
     if 'market_cache' not in st.session_state:
         st.session_state['market_cache'] = fetch_market_data()
     
     current_data = fetch_market_data()
-    previous_data = st.session_state['market_cache']
     st.session_state['market_cache'] = current_data
     
     c_header, c_meta = st.columns([3, 1])
@@ -299,18 +330,27 @@ def render_market_ticker():
     assets = [("USD", "Dólar"), ("EUR", "Euro"), ("GBP", "Libra"), ("BTC", "Bitcoin")]
 
     for idx, (symbol, label) in enumerate(assets):
-        curr = current_data.get(symbol, 0)
-        prev = previous_data.get(symbol, 0)
+        curr_val = current_data.get(symbol, 0.0)
         
-        anim = "anim-up" if curr > prev else "anim-down" if curr < prev else ""
-        trend = "trend-up" if curr > prev else "trend-down" if curr < prev else "trend-flat"
+        # Lógica de Tendência (Pega da API 'varBid' ou compara com anterior)
+        # Se variação > 0 é subida (Verde), se < 0 é descida (Vermelho)
+        variation = current_data.get("variations", {}).get(symbol, 0.0)
+        is_up = variation >= 0
         
+        trend_class = "trend-up" if is_up else "trend-down"
+        icon = "▲" if is_up else "▼"
+        svg_bg = get_svg_chart(is_up) # Gera o gráfico SVG
+            
         with cols[idx]:
             st.markdown(f"""
-            <div class="market-card {anim}">
-                <div class="label-coin">{label} ({symbol})</div>
-                <div class="value-coin {trend}">R$ {curr:,.2f}</div>
-            </div>""", unsafe_allow_html=True)
+            <div class="market-card">
+                {svg_bg}
+                <div class="card-content">
+                    <div class="label-coin">{label} ({symbol})</div>
+                    <div class="value-coin {trend_class}">R$ {curr_val:,.2f} {icon}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
 # --- LOGIN FLOW ---
 def login_flow():
@@ -428,7 +468,6 @@ def main():
     with tabs[4]:
         df = db_manager.fetch_all(user)
         if not df.empty:
-            # Formatação visual na TELA
             df['date'] = pd.to_datetime(df['date'])
             df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
             
@@ -447,17 +486,13 @@ def main():
 
             st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
             
-            # --- NOVIDADE: BOTÃO DE DOWNLOAD EXCEL REAL ---
             st.divider()
             col_d1, col_d2 = st.columns([1, 4])
             with col_d1:
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    # Copia para formatar valor
                     df_export = display_df.copy()
-                    # Formata coluna Valor para R$ X.XXX,XX
                     df_export['Valor'] = df_export['Valor'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    
                     df_export.to_excel(writer, index=False, sheet_name='Extrato')
                 
                 st.download_button(
