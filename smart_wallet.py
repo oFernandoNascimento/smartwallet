@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 08/01/2026
-Version: 3.1.0 (Clean UX Edition)
+Version: 3.2.0 (Clean UX & Security Edition)
 """
 
 import streamlit as st
@@ -129,6 +129,7 @@ class SecureTransactionDAO:
         return sqlite3.connect(self.db_name, check_same_thread=False)
 
     def _hash_password(self, password):
+        """Cria hash da senha para segurança"""
         return hashlib.sha256(password.encode()).hexdigest()
 
     def init_db(self):
@@ -136,6 +137,8 @@ class SecureTransactionDAO:
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # Tabela de Usuários
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS users (
                         username TEXT PRIMARY KEY,
@@ -143,6 +146,8 @@ class SecureTransactionDAO:
                         created_at TEXT
                     )
                 """)
+                
+                # Tabela de Transações
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS transactions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,6 +168,7 @@ class SecureTransactionDAO:
     def create_user(self, username, password):
         if not username or not password:
             return False, "Usuário e senha são obrigatórios."
+            
         pwd_hash = self._hash_password(password)
         try:
             with self.get_connection() as conn:
@@ -340,11 +346,12 @@ def render_market_ticker():
             </div>
             """, unsafe_allow_html=True)
 
-# --- FUNÇÃO DE CONTROLE DE LOGIN (ATUALIZADA) ---
+# --- FUNÇÃO DE CONTROLE DE LOGIN (CORRIGIDA) ---
 def login_flow():
     """
     Gerencia a interface de Login/Registro.
-    As Keys foram alteradas para 'access_code' e 'registry_code' para limpar o histórico do navegador.
+    As Keys foram alteradas (v_secure) para impedir o autocomplete do navegador
+    de sobrepor os campos, corrigindo o problema visual.
     """
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
@@ -368,11 +375,11 @@ def login_flow():
 
         # ABA: LOGIN
         with tab_login:
-            # Adicionado clear_on_submit=True para evitar histórico agressivo
+            # clear_on_submit ajuda a limpar o formulário e evitar cache
             with st.form("login_form", clear_on_submit=True):
-                # KEY ÚNICA NOVA: 'login_access_code_v1' evita sugestões antigas
-                user_login = st.text_input("Usuário", placeholder="Seu nome de usuário", key="login_access_code_v1")
-                pass_login = st.text_input("Senha", type="password", placeholder="Sua senha secreta", key="login_pass_code_v1")
+                # KEY ÚNICA NOVA: 'access_code_secure' evita sugestões antigas do navegador
+                user_login = st.text_input("Usuário", placeholder="Seu nome de usuário", key="access_code_secure")
+                pass_login = st.text_input("Senha", type="password", placeholder="Sua senha secreta", key="pass_code_secure")
                 submit_login = st.form_submit_button("Acessar Painel", type="primary", use_container_width=True)
 
                 if submit_login:
@@ -387,13 +394,12 @@ def login_flow():
 
         # ABA: REGISTRO
         with tab_register:
-            # Adicionado clear_on_submit=True
             with st.form("register_form", clear_on_submit=True):
                 st.info("Crie um usuário único para proteger seus dados.")
-                # KEY ÚNICA NOVA: 'new_registry_user_v1' evita sugestões antigas
-                new_user = st.text_input("Escolha um Usuário", placeholder="Ex: fernando.silva", key="new_registry_user_v1")
-                new_pass = st.text_input("Escolha uma Senha", type="password", key="new_registry_pass_v1")
-                new_pass_confirm = st.text_input("Confirme a Senha", type="password", key="new_registry_pass_conf_v1")
+                # KEY ÚNICA NOVA: 'new_registry_secure' evita sugestões antigas
+                new_user = st.text_input("Escolha um Usuário", placeholder="Ex: fernando.silva", key="new_registry_secure")
+                new_pass = st.text_input("Escolha uma Senha", type="password", key="new_registry_pass_secure")
+                new_pass_confirm = st.text_input("Confirme a Senha", type="password", key="new_registry_pass_conf_secure")
                 submit_register = st.form_submit_button("Criar Conta", use_container_width=True)
 
                 if submit_register:
@@ -408,13 +414,15 @@ def login_flow():
                         else:
                             st.error(message)
 
+    # Bloqueia a execução se não estiver logado
     st.stop()
 
 # --- EXECUÇÃO PRINCIPAL (APP) ---
 def main():
+    # 1. Verifica autenticação antes de tudo
     current_user = login_flow()
 
-    # Barra lateral logada
+    # 2. Barra lateral logada (aparece apenas após o login)
     with st.sidebar:
         st.header("👤 Perfil")
         st.success(f"Usuário: **{current_user}**")
@@ -425,6 +433,7 @@ def main():
         st.divider()
         st.info("Seus dados estão criptografados e salvos localmente.")
 
+    # 3. Renderiza o Ticker de Mercado e o restante do App
     render_market_ticker()
     st.divider()
 
@@ -436,6 +445,7 @@ def main():
     # 1. INPUT NLP
     with tabs[0]:
         st.markdown(f"#### 🗣️ Olá, {current_user}! O que vamos registrar hoje?")
+        # Aqui NÃO alterei a Key ou deixei sem Key padrão para manter seu histórico de transações
         with st.form("nlp_form", clear_on_submit=True):
             user_input = st.text_input(
                 "Descreva sua movimentação:", 
