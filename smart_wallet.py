@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.10.1 (UI Polish: WhatsApp, Green/Red Balance, Pro Charts)
+Version: 4.10.2 (Fix NameError Bug)
 """
 
 import streamlit as st
@@ -99,7 +99,7 @@ st.markdown("""
     .trend-down { color: #F44336; }
     .trend-flat { color: #E0E0E0; }
     
-    /* DICAS DE USO (NOVO) */
+    /* DICAS DE USO */
     .tips-box {
         background-color: #262730;
         border-left: 4px solid #4CAF50;
@@ -234,7 +234,6 @@ def fetch_market_data():
     timeout_val = 5
 
     try:
-        # 1. MOEDAS FIAT (AwesomeAPI)
         url_fiat = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL"
         resp_fiat = requests.get(url_fiat, headers=headers, timeout=timeout_val)
         if resp_fiat.status_code == 200:
@@ -244,7 +243,6 @@ def fetch_market_data():
             market_data["GBP"] = float(data['GBPBRL']['bid'])
             market_data["status"] = "online"
 
-        # 2. BITCOIN (MERCADO BITCOIN)
         r_btc = requests.get("https://www.mercadobitcoin.net/api/BTC/ticker/", headers=headers, timeout=timeout_val)
         if r_btc.status_code == 200:
             market_data["BTC"] = float(r_btc.json()['ticker']['last'])
@@ -291,7 +289,7 @@ def process_natural_language_input(text, market_data):
             continue
     return {"error": "Não foi possível processar."}
 
-# --- CONSULTOR FINANCEIRO EXPERT ---
+# --- CONSULTOR FINANCEIRO ---
 def generate_financial_report(df, market_data):
     if df.empty: return "Dados insuficientes para análise."
     
@@ -304,37 +302,21 @@ def generate_financial_report(df, market_data):
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
-        ATUE COMO: Um Consultor Financeiro de Elite e Cientista de Dados (Expert em Finanças Pessoais Brasileiras).
-        
-        DADOS DO USUÁRIO (Histórico de Transações):
-        {df.to_string()}
-        
-        DADOS DE MERCADO (Cotações Atuais):
-        {resumo_mercado}
-        
-        OBJETIVO: Gerar um relatório financeiro ultra-detalhado, estratégico e acionável.
-        
-        ESTRUTURA OBRIGATÓRIA DA RESPOSTA (Use Markdown e Emojis):
-        1. 📊 **Diagnóstico Executivo**:
-           - Resumo do fluxo de caixa.
-           - Saúde financeira geral (0 a 10).
-           
-        2. 🔍 **Análise Profunda de Gastos**:
-           - Identifique padrões e gastos supérfluos.
-           
-        3. 💰 **Estratégia de Investimentos & Mercado**:
-           - Cruzamento do saldo com oportunidades do mercado (Dólar, BTC).
-           
-        4. 🚀 **Plano de Ação Tático**:
-           - 3 tarefas imediatas.
-        
-        TOM DE VOZ: Profissional e direto.
+        ATUE COMO: Um Consultor Financeiro de Elite.
+        DADOS: {df.to_string()}
+        MERCADO: {resumo_mercado}
+        OBJETIVO: Relatório financeiro detalhado em PT-BR.
+        ESTRUTURA:
+        1. Diagnóstico Executivo (Fluxo de caixa, saúde financeira).
+        2. Análise de Gastos.
+        3. Estratégia de Investimentos (Baseado no mercado).
+        4. Plano de Ação.
         """
         return model.generate_content(prompt).text
     except Exception:
         return "Serviço de consultoria indisponível no momento."
 
-# --- UI TICKER (LIMPO) ---
+# --- UI TICKER ---
 @st.fragment(run_every=3600)
 def render_market_ticker():
     current_data = fetch_market_data()
@@ -422,7 +404,6 @@ def main():
     with tabs[0]:
         st.markdown(f"#### 🗣️ Olá, {user}! Vamos organizar suas finanças?")
         
-        # [MUDANÇA 1] Texto "Zap" para "WhatsApp"
         st.markdown("""
         <div class="tips-box">
             <span class="tips-title">💡 Dicas de uso da IA:</span>
@@ -461,15 +442,14 @@ def main():
     with tabs[2]:
         df = db_manager.fetch_all(user)
         if not df.empty:
+            # [CORREÇÃO] Variáveis renomeadas corretamente
             inc = df[df['type'] == 'Receita']['amount'].sum()
             exp = df[df['type'] == 'Despesa']['amount'].sum()
-            balance = income - expense
+            balance = inc - exp
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Entradas", f"R$ {inc:,.2f}")
             c2.metric("Saídas", f"R$ {exp:,.2f}")
-            
-            # [MUDANÇA 2] Saldo Colorido (Verde/Vermelho via Delta)
             c3.metric("Saldo", f"R$ {balance:,.2f}", delta=f"{balance:,.2f}")
             
             st.divider()
@@ -477,19 +457,13 @@ def main():
             expense_data = df[df['type'] == 'Despesa'].groupby("category")['amount'].sum().reset_index()
             
             if not expense_data.empty:
-                # [MUDANÇA 3] Gráfico Donut Melhorado (Cores, Furo maior, Legenda clara)
                 fig = px.pie(expense_data, values='amount', names='category', 
                              color_discrete_sequence=px.colors.qualitative.Set3,
-                             hole=0.6) # Furo maior = mais moderno
-                
-                # Configura hover para mostrar R$
+                             hole=0.6)
                 fig.update_traces(textposition='outside', textinfo='percent+label', 
                                   hovertemplate='%{label}: R$ %{value:,.2f}<extra></extra>')
-                
-                # Layout Transparente
                 fig.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), 
                                   paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-                                  
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("Sem dados de despesa para visualização.")
@@ -507,7 +481,7 @@ def main():
             else:
                 st.info("Nenhum investimento encontrado.")
 
-    # 5. EXTRATO (COM EXCEL FORMATADO R$)
+    # 5. EXTRATO
     with tabs[4]:
         df = db_manager.fetch_all(user)
         if not df.empty:
@@ -553,7 +527,7 @@ def main():
                     except Exception as e:
                         st.error(f"Erro ao reiniciar: {e}")
 
-    # 6. Consultor (EXPERT)
+    # 6. Consultor
     with tabs[5]:
         if st.button("Gerar Análise de Expert"):
             df = db_manager.fetch_all(user)
