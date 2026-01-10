@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.5.1 (Fix HTML Rendering Bug)
+Version: 4.5.3 (Binance API for Bitcoin Backup)
 """
 
 import streamlit as st
@@ -217,61 +217,98 @@ class CloudTransactionDAO:
 
 db_manager = CloudTransactionDAO()
 
-# --- DADOS DE MERCADO (AWESOME API - PRECISÃO GOOGLE) ---
+# --- DADOS DE MERCADO (ROBUST MULTI-API) ---
 def fetch_market_data():
     market_data = {"USD": 0, "EUR": 0, "GBP": 0, "BTC": 0, "status": "offline", "variations": {}}
-    
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    # 1. TENTATIVA PRINCIPAL: AwesomeAPI (Melhor para BRL)
     try:
-        # Busca TUDO em uma única chamada (Mais rápido e preciso)
         url = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL,BTC-BRL"
-        resp = requests.get(url, timeout=3)
-        
+        resp = requests.get(url, headers=headers, timeout=5)
         if resp.status_code == 200:
             data = resp.json()
-            # AwesomeAPI retorna: { 'USDBRL': { 'bid': '5.37', 'varBid': '0.01' } ... }
-            
             market_data["USD"] = float(data['USDBRL']['bid'])
-            market_data["variations"]["USD"] = float(data['USDBRL']['varBid'])
-            
             market_data["EUR"] = float(data['EURBRL']['bid'])
-            market_data["variations"]["EUR"] = float(data['EURBRL']['varBid'])
-            
             market_data["GBP"] = float(data['GBPBRL']['bid'])
-            market_data["variations"]["GBP"] = float(data['GBPBRL']['varBid'])
-            
             market_data["BTC"] = float(data['BTCBRL']['bid'])
+            
+            # Variações
+            market_data["variations"]["USD"] = float(data['USDBRL']['varBid'])
+            market_data["variations"]["EUR"] = float(data['EURBRL']['varBid'])
+            market_data["variations"]["GBP"] = float(data['GBPBRL']['varBid'])
             market_data["variations"]["BTC"] = float(data['BTCBRL']['varBid'])
             
             market_data["status"] = "online"
-            
+            return market_data 
     except Exception:
-        # Valores de fallback caso a API caia
-        market_data.update({"USD": 5.41, "EUR": 6.35, "GBP": 7.20, "BTC": 486000})
-        
+        pass 
+
+    # 2. PLANO B: Frankfurter (Fallback para Fiat)
+    try:
+        # USD
+        r_usd = requests.get("https://api.frankfurter.app/latest?from=USD&to=BRL", headers=headers, timeout=3)
+        if r_usd.status_code == 200:
+            market_data["USD"] = r_usd.json()['rates']['BRL']
+            
+        # EUR
+        r_eur = requests.get("https://api.frankfurter.app/latest?from=EUR&to=BRL", headers=headers, timeout=3)
+        if r_eur.status_code == 200:
+            market_data["EUR"] = r_eur.json()['rates']['BRL']
+            
+        # GBP
+        r_gbp = requests.get("https://api.frankfurter.app/latest?from=GBP&to=BRL", headers=headers, timeout=3)
+        if r_gbp.status_code == 200:
+            market_data["GBP"] = r_gbp.json()['rates']['BRL']
+            
+        market_data["status"] = "online (backup)"
+    except Exception:
+        pass
+
+    # 3. PLANO C: Binance para BTC (Backup robusto para Crypto)
+    if market_data["BTC"] == 0:
+        try:
+            # Binance é extremamente estável
+            r_bin = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL", timeout=3)
+            if r_bin.status_code == 200:
+                market_data["BTC"] = float(r_bin.json()['price'])
+        except Exception:
+            pass
+
+    # 4. PLANO D: Coingecko para BTC (Último recurso)
+    if market_data["BTC"] == 0:
+        try:
+            r_btc = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=brl", headers=headers, timeout=3)
+            if r_btc.status_code == 200:
+                market_data["BTC"] = float(r_btc.json()['bitcoin']['brl'])
+        except Exception:
+            pass
+
+    # Se tudo falhar, usa valores aproximados de referência para não quebrar a UI
+    if market_data["USD"] == 0: market_data["USD"] = 5.40
+    if market_data["EUR"] == 0: market_data["EUR"] = 6.30
+    if market_data["GBP"] == 0: market_data["GBP"] = 7.20
+    if market_data["BTC"] == 0: market_data["BTC"] = 490000.00
+    
     return market_data
 
 # --- GERADOR DE GRÁFICO SVG (SPARKLINE) ---
 def get_svg_chart(is_up):
     """
     Gera um código SVG de um gráfico de linha.
-    Verde subindo se is_up=True, Vermelho descendo se is_up=False.
     """
     color = "#4CAF50" if is_up else "#F44336"
     fill_color = "rgba(76, 175, 80, 0.2)" if is_up else "rgba(244, 67, 54, 0.2)"
     
-    # Coordenadas do SVG (0 a 100)
     if is_up:
-        # Começa baixo, termina alto
         points = "0,80 20,60 40,70 60,30 80,40 100,10"
         area_points = "0,100 0,80 20,60 40,70 60,30 80,40 100,10 100,100"
     else:
-        # Começa alto, termina baixo
         points = "0,20 20,40 40,30 60,70 80,60 100,90"
         area_points = "0,100 0,20 20,40 40,30 60,70 80,60 100,90 100,100"
 
-    # [CORREÇÃO] Removemos a indentação para evitar que o Markdown ache que é código
-    svg = f'<svg viewBox="0 0 100 100" class="chart-bg" preserveAspectRatio="none"><polygon points="{area_points}" fill="{fill_color}" /><polyline points="{points}" fill="none" stroke="{color}" stroke-width="3" vector-effect="non-scaling-stroke"/></svg>'
-    return svg
+    # SVG compactado
+    return f'<svg viewBox="0 0 100 100" class="chart-bg" preserveAspectRatio="none"><polygon points="{area_points}" fill="{fill_color}" /><polyline points="{points}" fill="none" stroke="{color}" stroke-width="3" vector-effect="non-scaling-stroke"/></svg>'
 
 # --- NLP ---
 def process_natural_language_input(text, market_data):
@@ -319,7 +356,7 @@ def render_market_ticker():
     with c_header:
         st.title(f"📊 SmartWallet | {datetime.now(fuso_br).strftime('%d/%m/%Y')}")
     with c_meta:
-        status_color = "🟢" if current_data['status'] == "online" else "🔴"
+        status_color = "🟢" if "online" in current_data['status'] else "🔴"
         st.caption(f"{status_color} Feed: {current_data['status'].upper()} | ☁️ Nuvem Conectada")
 
     cols = st.columns(4)
@@ -337,16 +374,7 @@ def render_market_ticker():
         svg_bg = get_svg_chart(is_up)
             
         with cols[idx]:
-            # [CORREÇÃO] Removemos a indentação do HTML para o Streamlit renderizar corretamente
-            html_content = f"""
-<div class="market-card">
-    {svg_bg}
-    <div class="card-content">
-        <div class="label-coin">{label} ({symbol})</div>
-        <div class="value-coin {trend_class}">R$ {curr_val:,.2f} {icon}</div>
-    </div>
-</div>
-"""
+            html_content = f"""<div class="market-card">{svg_bg}<div class="card-content"><div class="label-coin">{label} ({symbol})</div><div class="value-coin {trend_class}">R$ {curr_val:,.2f} {icon}</div></div></div>"""
             st.markdown(html_content, unsafe_allow_html=True)
 
 # --- LOGIN FLOW ---
@@ -465,7 +493,6 @@ def main():
     with tabs[4]:
         df = db_manager.fetch_all(user)
         if not df.empty:
-            # Formatação visual na TELA
             df['date'] = pd.to_datetime(df['date'])
             df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
             
