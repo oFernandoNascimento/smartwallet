@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.1.0 (Date Format Update)
+Version: 4.2.0 (Export to CSV Added)
 """
 
 import streamlit as st
@@ -538,11 +538,11 @@ def main():
         else:
             st.warning("Sem dados.")
 
-    # 5. EXTRATO (GRID)
+    # 5. EXTRATO (COM DOWNLOAD CSV)
     with tabs[4]:
         df = db_manager.fetch_all(current_user)
         if not df.empty:
-            # [MODIFICAÇÃO 2] FORMATAÇÃO DE DATA E HORA
+            # [MODIFICAÇÃO 2] FORMATAÇÃO DE DATA E HORA (MANTIDA)
             df['date'] = pd.to_datetime(df['date'])
             df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
 
@@ -561,12 +561,27 @@ def main():
 
             st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
             
-            if st.button("⚠️ Apagar Todos os Meus Dados"):
-                try:
-                    db_manager.clear_data(current_user)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao reiniciar: {e}")
+            # --- NOVIDADE: BOTÃO DE DOWNLOAD (Adicionado aqui com layout limpo) ---
+            st.divider()
+            col_d1, col_d2 = st.columns([1, 4])
+            with col_d1:
+                # Converte o DataFrame original para CSV
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Baixar CSV",
+                    data=csv,
+                    file_name=f"extrato_smartwallet_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            with col_d2:
+                # O botão de apagar foi mantido EXATAMENTE como no original, só posicionado ao lado
+                if st.button("⚠️ Apagar Todos os Meus Dados"):
+                    try:
+                        db_manager.clear_data(current_user)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao reiniciar: {e}")
 
     # 6. CONSULTORIA
     with tabs[5]:
