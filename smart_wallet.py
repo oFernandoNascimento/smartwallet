@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.2.1 (Fix Excel Encoding & Separator)
+Version: 4.2.2 (Fix NameError Bug & Excel)
 """
 
 import streamlit as st
@@ -559,7 +559,8 @@ def main():
                 styler.format({'Valor': 'R$ {:,.2f}'})
                 return styler
 
-            st.dataframe(style_rows(display_df.style), use_container_width=True, hide_index=True)
+            # [CORREÇÃO FINAL]: Chamando 'apply_style' com o nome correto!
+            st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
             
             # --- NOVIDADE: BOTÃO DE DOWNLOAD (Fix Acentos e Colunas para Excel BR) ---
             st.divider()
@@ -576,7 +577,6 @@ def main():
                     use_container_width=True
                 )
             with col_d2:
-                # O botão de apagar foi mantido EXATAMENTE como no original, só posicionado ao lado
                 if st.button("⚠️ Apagar Todos os Meus Dados"):
                     try:
                         db_manager.clear_data(current_user)
