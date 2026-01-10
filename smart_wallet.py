@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.2.0 (Export to CSV Added)
+Version: 4.2.1 (Fix Excel Encoding & Separator)
 """
 
 import streamlit as st
@@ -538,7 +538,7 @@ def main():
         else:
             st.warning("Sem dados.")
 
-    # 5. EXTRATO (COM DOWNLOAD CSV)
+    # 5. EXTRATO (COM DOWNLOAD CSV FIXADO)
     with tabs[4]:
         df = db_manager.fetch_all(current_user)
         if not df.empty:
@@ -559,14 +559,15 @@ def main():
                 styler.format({'Valor': 'R$ {:,.2f}'})
                 return styler
 
-            st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
+            st.dataframe(style_rows(display_df.style), use_container_width=True, hide_index=True)
             
-            # --- NOVIDADE: BOTÃO DE DOWNLOAD (Adicionado aqui com layout limpo) ---
+            # --- NOVIDADE: BOTÃO DE DOWNLOAD (Fix Acentos e Colunas para Excel BR) ---
             st.divider()
             col_d1, col_d2 = st.columns([1, 4])
             with col_d1:
-                # Converte o DataFrame original para CSV
-                csv = df.to_csv(index=False).encode('utf-8')
+                # [CORREÇÃO] SEP=';' para colunas, DECIMAL=',' e UTF-8-SIG para acentos
+                csv = df.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig')
+                
                 st.download_button(
                     label="📥 Baixar CSV",
                     data=csv,
