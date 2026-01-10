@@ -4,8 +4,8 @@ Sistema de Gestão Financeira Inteligente com Processamento de Linguagem Natural
 Desenvolvido como projeto de portfólio para demonstração de habilidades técnicas em Python, Streamlit e integração com LLMs.
 
 Author: Fernando Teixeira do Nascimento
-Date: 08/01/2026
-Version: 3.2.0 (Clean UX & Security Edition)
+Date: 10/01/2026
+Version: 4.0.0 (Cloud Database Edition - PostgreSQL)
 """
 
 import streamlit as st
@@ -17,8 +17,8 @@ import json
 import re
 import time
 import pytz
-import sqlite3
 import hashlib
+import psycopg2 # ALTERADO: Novo conector para PostgreSQL (Nuvem)
 from datetime import datetime
 
 # --- CONFIGURAÇÃO GLOBAL DE FUSO HORÁRIO ---
@@ -43,6 +43,11 @@ def configure_api():
             pass 
         else:
             genai.configure(api_key=api_key)
+            
+        # ALTERADO: Verificação extra para o Banco de Dados
+        if not st.secrets.get("DATABASE_URL"):
+            st.warning("⚠️ Atenção: 'DATABASE_URL' não encontrada. O banco na nuvem não funcionará.")
+            
     except Exception as e:
         st.error(f"Erro de Configuração de Ambiente: {e}")
         st.stop()
@@ -112,21 +117,22 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- CAMADA DE PERSISTÊNCIA (SQLITE3 + AUTENTICAÇÃO SEGURA) ---
-class SecureTransactionDAO:
+# --- CAMADA DE PERSISTÊNCIA (POSTGRESQL - NUVEM) ---
+# ALTERADO: Esta classe inteira foi adaptada para PostgreSQL
+class CloudTransactionDAO:
     """
     Gerenciador de Banco de Dados Híbrido:
     1. Gerencia Usuários (Criptografia SHA-256)
-    2. Gerencia Transações Financeiras
+    2. Gerencia Transações Financeiras (Na Nuvem/Supabase)
     """
     
-    def __init__(self, db_name="smartwallet.db"):
-        self.db_name = db_name
+    def __init__(self):
+        # Não precisamos mais de db_name local
         self.init_db()
 
     def get_connection(self):
-        """Estabelece conexão thread-safe com SQLite"""
-        return sqlite3.connect(self.db_name, check_same_thread=False)
+        """Estabelece conexão com o Supabase via URL"""
+        return psycopg2.connect(st.secrets["DATABASE_URL"])
 
     def _hash_password(self, password):
         """Cria hash da senha para segurança"""
@@ -136,31 +142,31 @@ class SecureTransactionDAO:
         """Inicializa as tabelas de Usuários e Transações"""
         try:
             with self.get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Tabela de Usuários
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        username TEXT PRIMARY KEY,
-                        password_hash TEXT NOT NULL,
-                        created_at TEXT
-                    )
-                """)
-                
-                # Tabela de Transações
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS transactions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id TEXT,
-                        date TEXT,
-                        amount REAL,
-                        category TEXT,
-                        description TEXT,
-                        type TEXT,
-                        FOREIGN KEY(user_id) REFERENCES users(username)
-                    )
-                """)
-                conn.commit()
+                with conn.cursor() as cursor:
+                    
+                    # Tabela de Usuários
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS users (
+                            username TEXT PRIMARY KEY,
+                            password_hash TEXT NOT NULL,
+                            created_at TEXT
+                        );
+                    """)
+                    
+                    # Tabela de Transações (SERIAL substitui AUTOINCREMENT)
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS transactions (
+                            id SERIAL PRIMARY KEY,
+                            user_id TEXT,
+                            date TEXT,
+                            amount REAL,
+                            category TEXT,
+                            description TEXT,
+                            type TEXT,
+                            FOREIGN KEY(user_id) REFERENCES users(username)
+                        );
+                    """)
+                    conn.commit()
         except Exception as e:
             st.error(f"Erro Crítico de Banco de Dados: {e}")
 
@@ -172,14 +178,15 @@ class SecureTransactionDAO:
         pwd_hash = self._hash_password(password)
         try:
             with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
-                    (username, pwd_hash, str(datetime.now()))
-                )
-                conn.commit()
+                with conn.cursor() as cursor:
+                    # Postgres usa %s no lugar de ?
+                    cursor.execute(
+                        "INSERT INTO users (username, password_hash, created_at) VALUES (%s, %s, %s)",
+                        (username, pwd_hash, str(datetime.now()))
+                    )
+                    conn.commit()
             return True, "Conta criada com sucesso! Faça login."
-        except sqlite3.IntegrityError:
+        except psycopg2.IntegrityError:
             return False, "Este nome de usuário já está em uso."
         except Exception as e:
             return False, f"Erro ao criar conta: {e}"
@@ -188,12 +195,12 @@ class SecureTransactionDAO:
         pwd_hash = self._hash_password(password)
         try:
             with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT username FROM users WHERE username = ? AND password_hash = ?", 
-                    (username, pwd_hash)
-                )
-                user = cursor.fetchone()
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT username FROM users WHERE username = %s AND password_hash = %s", 
+                        (username, pwd_hash)
+                    )
+                    user = cursor.fetchone()
                 return user is not None
         except Exception:
             return False
@@ -202,12 +209,13 @@ class SecureTransactionDAO:
     def insert_transaction(self, user_id, date, amount, category, description, type_):
         try:
             with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT INTO transactions (user_id, date, amount, category, description, type)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (user_id, str(date), float(amount), category, description, type_))
-                conn.commit()
+                with conn.cursor() as cursor:
+                    # Postgres usa %s no lugar de ?
+                    cursor.execute("""
+                        INSERT INTO transactions (user_id, date, amount, category, description, type)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (user_id, str(date), float(amount), category, description, type_))
+                    conn.commit()
             return True
         except Exception:
             return False
@@ -215,8 +223,9 @@ class SecureTransactionDAO:
     def fetch_all(self, user_id):
         try:
             with self.get_connection() as conn:
+                # Pandas lê direto do Postgres
                 df = pd.read_sql_query(
-                    "SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC, id DESC", 
+                    "SELECT * FROM transactions WHERE user_id = %s ORDER BY date DESC, id DESC", 
                     conn, 
                     params=(user_id,)
                 )
@@ -229,15 +238,15 @@ class SecureTransactionDAO:
     def clear_data(self, user_id):
         try:
             with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
-                conn.commit()
+                with conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
+                    conn.commit()
             return True
         except Exception:
             return False
 
-# Instância Global Segura
-db_manager = SecureTransactionDAO()
+# ALTERADO: Instância Global agora usa a versão Cloud
+db_manager = CloudTransactionDAO()
 
 # --- SERVIÇO DE DADOS DE MERCADO ---
 def fetch_market_data():
@@ -324,8 +333,9 @@ def render_market_ticker():
     with c_header:
         st.title(f"📊 SmartWallet | {datetime.now(fuso_br).strftime('%d/%m/%Y')}")
     with c_meta:
+        # ALTERADO: Pequeno indicador visual de que a nuvem está ativa
         status_color = "🟢" if current_data['status'] == "online" else "🔴"
-        st.caption(f"{status_color} Feed: {current_data['status'].upper()} | {datetime.now(fuso_br).strftime('%H:%M:%S')}")
+        st.caption(f"{status_color} Feed: {current_data['status'].upper()} | ☁️ Nuvem Conectada")
 
     cols = st.columns(4)
     assets = [("USD", "Dólar"), ("EUR", "Euro"), ("GBP", "Libra"), ("BTC", "Bitcoin")]
@@ -346,7 +356,7 @@ def render_market_ticker():
             </div>
             """, unsafe_allow_html=True)
 
-# --- FUNÇÃO DE CONTROLE DE LOGIN (CORRIGIDA) ---
+# --- FUNÇÃO DE CONTROLE DE LOGIN (MANTIDA) ---
 def login_flow():
     """
     Gerencia a interface de Login/Registro.
@@ -366,8 +376,8 @@ def login_flow():
     with col2:
         st.markdown("""
         <div class="login-container">
-            <div class="login-header">🔐 SmartWallet Access</div>
-            <div class="login-sub">Gerenciamento financeiro seguro e inteligente</div>
+            <div class="login-header">🔐 SmartWallet Cloud</div>
+            <div class="login-sub">Gerenciamento financeiro seguro e na Nuvem</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -395,7 +405,7 @@ def login_flow():
         # ABA: REGISTRO
         with tab_register:
             with st.form("register_form", clear_on_submit=True):
-                st.info("Crie um usuário único para proteger seus dados.")
+                st.info("Crie um usuário único para proteger seus dados na nuvem.")
                 # KEY ÚNICA NOVA: 'new_registry_secure' evita sugestões antigas
                 new_user = st.text_input("Escolha um Usuário", placeholder="Ex: fernando.silva", key="new_registry_secure")
                 new_pass = st.text_input("Escolha uma Senha", type="password", key="new_registry_pass_secure")
@@ -431,7 +441,7 @@ def main():
             st.session_state['username'] = None
             st.rerun()
         st.divider()
-        st.info("Seus dados estão criptografados e salvos localmente.")
+        st.info("✅ PostgreSQL Conectado")
 
     # 3. Renderiza o Ticker de Mercado e o restante do App
     render_market_ticker()
