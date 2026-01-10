@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.10.0 (UX Improvements: User Instructions)
+Version: 4.10.1 (UI Polish: WhatsApp, Green/Red Balance, Pro Charts)
 """
 
 import streamlit as st
@@ -228,14 +228,8 @@ db_manager = CloudTransactionDAO()
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_data():
     market_data = {
-        "USD": 5.37, 
-        "EUR": 6.25, 
-        "GBP": 7.20, 
-        "BTC": 486274.14, 
-        "status": "offline", 
-        "variations": {}
+        "USD": 5.37, "EUR": 6.25, "GBP": 7.20, "BTC": 486274.14, "status": "offline", "variations": {}
     }
-    
     headers = {"User-Agent": "Mozilla/5.0"}
     timeout_val = 5
 
@@ -243,7 +237,6 @@ def fetch_market_data():
         # 1. MOEDAS FIAT (AwesomeAPI)
         url_fiat = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL"
         resp_fiat = requests.get(url_fiat, headers=headers, timeout=timeout_val)
-        
         if resp_fiat.status_code == 200:
             data = resp_fiat.json()
             market_data["USD"] = float(data['USDBRL']['bid'])
@@ -255,7 +248,6 @@ def fetch_market_data():
         r_btc = requests.get("https://www.mercadobitcoin.net/api/BTC/ticker/", headers=headers, timeout=timeout_val)
         if r_btc.status_code == 200:
             market_data["BTC"] = float(r_btc.json()['ticker']['last'])
-            
     except Exception:
         pass 
     
@@ -423,18 +415,18 @@ def main():
     render_market_ticker()
     st.divider()
 
-    market = fetch_market_data() # Usa a versão cacheada
+    market = fetch_market_data() 
     tabs = st.tabs(["🤖 Input IA", "✍️ Manual", "📈 Dashboard", "💰 Investimentos", "📑 Extrato Detalhado", "🧠 Consultor"])
 
-    # 1. NLP (COM INSTRUÇÕES SIMPLES E ELEGANTES)
+    # 1. NLP
     with tabs[0]:
         st.markdown(f"#### 🗣️ Olá, {user}! Vamos organizar suas finanças?")
         
-        # Dicas Visuais (Estilo Card Clean)
+        # [MUDANÇA 1] Texto "Zap" para "WhatsApp"
         st.markdown("""
         <div class="tips-box">
             <span class="tips-title">💡 Dicas de uso da IA:</span>
-            <span class="tips-item">• Digite como se falasse no Zap: <i>"Gastei 50 na padaria"</i></span>
+            <span class="tips-item">• Digite como se falasse no <b>WhatsApp</b>: <i>"Gastei 50 na padaria"</i></span>
             <span class="tips-item">• Para entradas, use palavras chave: <i>"Recebi 2500 de salário"</i></span>
             <span class="tips-item">• Invista facilmente: <i>"Comprei 100 reais em Bitcoin"</i></span>
         </div>
@@ -469,17 +461,40 @@ def main():
     with tabs[2]:
         df = db_manager.fetch_all(user)
         if not df.empty:
-            inc = df[df['type']=='Receita']['amount'].sum()
-            exp = df[df['type']=='Despesa']['amount'].sum()
+            inc = df[df['type'] == 'Receita']['amount'].sum()
+            exp = df[df['type'] == 'Despesa']['amount'].sum()
+            balance = income - expense
+            
             c1, c2, c3 = st.columns(3)
             c1.metric("Entradas", f"R$ {inc:,.2f}")
             c2.metric("Saídas", f"R$ {exp:,.2f}")
-            c3.metric("Saldo", f"R$ {inc-exp:,.2f}")
             
-            fig = px.pie(df[df['type']=='Despesa'], values='amount', names='category', hole=0.4)
-            st.plotly_chart(fig, use_container_width=True)
+            # [MUDANÇA 2] Saldo Colorido (Verde/Vermelho via Delta)
+            c3.metric("Saldo", f"R$ {balance:,.2f}", delta=f"{balance:,.2f}")
+            
+            st.divider()
+            st.subheader("Análise de Despesas por Categoria")
+            expense_data = df[df['type'] == 'Despesa'].groupby("category")['amount'].sum().reset_index()
+            
+            if not expense_data.empty:
+                # [MUDANÇA 3] Gráfico Donut Melhorado (Cores, Furo maior, Legenda clara)
+                fig = px.pie(expense_data, values='amount', names='category', 
+                             color_discrete_sequence=px.colors.qualitative.Set3,
+                             hole=0.6) # Furo maior = mais moderno
+                
+                # Configura hover para mostrar R$
+                fig.update_traces(textposition='outside', textinfo='percent+label', 
+                                  hovertemplate='%{label}: R$ %{value:,.2f}<extra></extra>')
+                
+                # Layout Transparente
+                fig.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), 
+                                  paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                                  
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Sem dados de despesa para visualização.")
         else:
-            st.info("Sem dados.")
+            st.warning("Aguardando dados para gerar visualizações.")
 
     # 4. Investimentos
     with tabs[3]:
