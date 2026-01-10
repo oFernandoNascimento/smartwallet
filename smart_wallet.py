@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.3.0 (Excel .XLSX Export)
+Version: 4.3.1 (Excel Headers in Portuguese)
 """
 
 import streamlit as st
@@ -19,7 +19,7 @@ import time
 import pytz
 import hashlib
 import psycopg2 
-import io # [NOVO] Necessário para criar o arquivo Excel na memória
+import io # Necessário para criar o Excel na memória
 from datetime import datetime
 
 # --- CONFIGURAÇÃO GLOBAL DE FUSO HORÁRIO ---
@@ -411,7 +411,7 @@ def main():
             else:
                 st.info("Nenhum investimento encontrado.")
 
-    # 5. EXTRATO (COM EXPORTAÇÃO EXCEL VERDADEIRO)
+    # 5. EXTRATO (COM EXPORTAÇÃO EXCEL EM PORTUGUÊS)
     with tabs[4]:
         df = db_manager.fetch_all(user)
         if not df.empty:
@@ -419,6 +419,7 @@ def main():
             df['date'] = pd.to_datetime(df['date'])
             df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
             
+            # Aqui criamos a tabela traduzida 'display_df'
             display_df = df.rename(columns={
                 'amount': 'Valor', 'category': 'Categoria', 
                 'description': 'Descrição', 'type': 'Tipo'
@@ -441,7 +442,8 @@ def main():
                 # Geração de Excel real em memória
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False, sheet_name='Extrato')
+                    # [CORREÇÃO]: Agora salvamos 'display_df' (que está em Português)
+                    display_df.to_excel(writer, index=False, sheet_name='Extrato')
                 
                 st.download_button(
                     label="📥 Baixar Excel",
