@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.14.0 (Modern UX: Toast Notifications & Auto-Refresh)
+Version: 4.15.0 (Clear Input Fix + Dynamic Toasts)
 """
 
 import streamlit as st
@@ -412,7 +412,8 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-        with st.form("nlp"):
+        # [MUDANÇA] clear_on_submit=True limpa a caixa de texto após envio
+        with st.form("nlp", clear_on_submit=True):
             txt = st.text_input("Descreva a transação:", placeholder="Ex: Almoço 45 reais, Uber 20, Recebi pix 100...")
             if st.form_submit_button("Processar") and txt:
                 with st.spinner("Processando..."):
@@ -423,8 +424,14 @@ def main():
                         
                         db_manager.insert_transaction(user, res['date'], res['amount'], res['category'], res['description'], res['type'])
                         
-                        # [MUDANÇA] Notificação Toast + Auto Refresh
-                        st.toast(f"✅ Salvo: {res['description']} (R$ {res['amount']})", icon="🎉")
+                        # [MUDANÇA] Notificação Inteligente (Verde vs Vermelho)
+                        if res['type'] == 'Receita':
+                            # Receita: Verde e com ícone
+                            st.toast(f":green[💰 Receita Salva: {res['description']} (+ R$ {res['amount']})]", icon="✅")
+                        else:
+                            # Despesa: Texto vermelho, SEM emoji (como pedido)
+                            st.toast(f":red[Despesa Registrada: {res['description']} (- R$ {res['amount']})]", icon=None)
+                        
                         time.sleep(1.5)
                         st.rerun()
                     else:
@@ -440,8 +447,11 @@ def main():
         if st.button("Salvar"):
             db_manager.insert_transaction(user, datetime.now(fuso_br), valor, cat, desc or cat, tipo)
             
-            # [MUDANÇA] Notificação Toast + Auto Refresh
-            st.toast("✅ Registro Salvo com Sucesso!", icon="💾")
+            if tipo == 'Receita':
+                st.toast(":green[✅ Registro Salvo com Sucesso!]", icon="✅")
+            else:
+                st.toast(":red[Registro Salvo com Sucesso!]", icon=None)
+                
             time.sleep(1.5)
             st.rerun()
 
