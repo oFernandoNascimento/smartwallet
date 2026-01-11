@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.13.1 (Tooltip Polish: BRL Currency & Portuguese Labels)
+Version: 4.14.0 (Modern UX: Toast Notifications & Auto-Refresh)
 """
 
 import streamlit as st
@@ -402,6 +402,7 @@ def main():
     # 1. NLP
     with tabs[0]:
         st.markdown(f"#### 🗣️ Olá, {user}! Vamos organizar suas finanças?")
+        
         st.markdown("""
         <div class="tips-box">
             <span class="tips-title">💡 Dicas de uso da IA:</span>
@@ -421,7 +422,11 @@ def main():
                             res['date'] += f" {datetime.now(fuso_br).strftime('%H:%M:%S')}"
                         
                         db_manager.insert_transaction(user, res['date'], res['amount'], res['category'], res['description'], res['type'])
-                        st.success(f"Salvo: {res['description']} (R$ {res['amount']})")
+                        
+                        # [MUDANÇA] Notificação Toast + Auto Refresh
+                        st.toast(f"✅ Salvo: {res['description']} (R$ {res['amount']})", icon="🎉")
+                        time.sleep(1.5)
+                        st.rerun()
                     else:
                         st.error(res['error'])
 
@@ -434,7 +439,11 @@ def main():
         desc = st.text_input("Descrição")
         if st.button("Salvar"):
             db_manager.insert_transaction(user, datetime.now(fuso_br), valor, cat, desc or cat, tipo)
-            st.success("Registro Salvo!")
+            
+            # [MUDANÇA] Notificação Toast + Auto Refresh
+            st.toast("✅ Registro Salvo com Sucesso!", icon="💾")
+            time.sleep(1.5)
+            st.rerun()
 
     # 3. Dashboard
     with tabs[2]:
@@ -454,7 +463,6 @@ def main():
             expense_data = df[df['type'] == 'Despesa'].groupby("category")['amount'].sum().reset_index()
             
             if not expense_data.empty:
-                # [MÁGICA DO TOOLTIP] Cria coluna formatada em PT-BR para exibir no mouse over
                 expense_data['formatted_amount'] = expense_data['amount'].apply(
                     lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 )
@@ -462,14 +470,13 @@ def main():
                 fig = px.pie(expense_data, values='amount', names='category', 
                              color_discrete_sequence=px.colors.qualitative.Set3,
                              hole=0.55,
-                             custom_data=['formatted_amount']) # Passa o dado formatado
+                             custom_data=['formatted_amount']) 
                 
                 fig.update_traces(
                     textposition='outside', 
                     textinfo='label+percent', 
                     pull=[0.02] * len(expense_data), 
                     marker=dict(line=dict(color='#000000', width=1)),
-                    # Configura o tooltip para usar o dado formatado
                     hovertemplate='<b>%{label}</b><br>Valor: %{customdata[0]}<extra></extra>'
                 )
                 
