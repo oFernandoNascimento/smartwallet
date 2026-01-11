@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.12.0 (Feed Always Online + Empty States UX)
+Version: 4.13.0 (Mobile Date Fix + Didactic Charts with Lines)
 """
 
 import streamlit as st
@@ -227,21 +227,14 @@ db_manager = CloudTransactionDAO()
 # --- DADOS DE MERCADO (FEED SEMPRE ONLINE) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_data():
-    # Inicializa JÁ COMO ONLINE com os valores de backup do Google
-    # Assim, se a API falhar, o usuário nem percebe e vê os dados corretos.
     market_data = {
-        "USD": 5.37, 
-        "EUR": 6.25, 
-        "GBP": 7.20, 
-        "BTC": 486274.14, 
-        "status": "online", # Forçado para evitar mensagem vermelha
-        "variations": {}
+        "USD": 5.37, "EUR": 6.25, "GBP": 7.20, "BTC": 486274.14, "status": "online", "variations": {}
     }
     headers = {"User-Agent": "Mozilla/5.0"}
     timeout_val = 5
 
     try:
-        # Tenta atualizar via API (Awesome)
+        # 1. MOEDAS FIAT (AwesomeAPI)
         url_fiat = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL"
         resp_fiat = requests.get(url_fiat, headers=headers, timeout=timeout_val)
         if resp_fiat.status_code == 200:
@@ -250,12 +243,11 @@ def fetch_market_data():
             market_data["EUR"] = float(data['EURBRL']['bid'])
             market_data["GBP"] = float(data['GBPBRL']['bid'])
 
-        # Tenta atualizar Bitcoin
+        # 2. BITCOIN (MERCADO BITCOIN)
         r_btc = requests.get("https://www.mercadobitcoin.net/api/BTC/ticker/", headers=headers, timeout=timeout_val)
         if r_btc.status_code == 200:
             market_data["BTC"] = float(r_btc.json()['ticker']['last'])
     except Exception:
-        # Se falhar, não faz nada (mantém os valores de backup definidos no início)
         pass 
     
     return market_data
@@ -465,13 +457,28 @@ def main():
             expense_data = df[df['type'] == 'Despesa'].groupby("category")['amount'].sum().reset_index()
             
             if not expense_data.empty:
+                # [MELHORIA VISUAL] Gráfico Didático (Setinha/Linha + Texto fora)
                 fig = px.pie(expense_data, values='amount', names='category', 
                              color_discrete_sequence=px.colors.qualitative.Set3,
-                             hole=0.6)
-                fig.update_traces(textposition='outside', textinfo='percent+label', 
-                                  hovertemplate='%{label}: R$ %{value:,.2f}<extra></extra>')
-                fig.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), 
-                                  paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                             hole=0.55) # Furo do donut
+                
+                fig.update_traces(
+                    textposition='outside', # Força o texto para fora
+                    textinfo='label+percent', # Mostra "Alimentação 20%"
+                    pull=[0.02] * len(expense_data), # Pequena explosão para separar fatias
+                    marker=dict(line=dict(color='#000000', width=1)) # Borda preta para contraste
+                )
+                
+                # Ajuste de layout para mobile (Margens maiores para caber o texto)
+                fig.update_layout(
+                    showlegend=False, # Remove a legenda lateral (já está no gráfico)
+                    margin=dict(t=40, b=40, l=40, r=40), 
+                    paper_bgcolor="rgba(0,0,0,0)", 
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    uniformtext_minsize=12, 
+                    uniformtext_mode='hide'
+                )
+                                  
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("Sem dados de despesa para visualização.")
@@ -487,7 +494,6 @@ def main():
                 st.metric("Total Investido", f"R$ {inv['amount'].sum():,.2f}")
                 st.dataframe(inv[['date', 'description', 'amount']], use_container_width=True)
             else:
-                # [MUDANÇA] Mensagem amigável de vazio
                 st.info("💰 Nenhum investimento registrado ainda. Comece investindo no futuro!")
         else:
             st.info("💰 Nenhum investimento registrado ainda. Comece investindo no futuro!")
@@ -496,50 +502,56 @@ def main():
     with tabs[4]:
         df = db_manager.fetch_all(user)
         if not df.empty:
-            df['date'] = pd.to_datetime(df['date'])
-            df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
+            # [CORREÇÃO CRÍTICA] Trata erro de data no Mobile (errors='coerce')
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
             
-            display_df = df.rename(columns={
-                'amount': 'Valor', 'category': 'Categoria', 
-                'description': 'Descrição', 'type': 'Tipo'
-            })[['Data', 'Tipo', 'Categoria', 'Descrição', 'Valor']]
+            # Remove linhas onde a data falhou (virou NaT)
+            df = df.dropna(subset=['date'])
             
-            def apply_style(styler):
-                styler.set_properties(**{'text-align': 'center', 'border': '1px solid #333'})
-                styler.set_table_styles([{'selector': 'th', 'props': [('background-color', '#262730'), ('color', 'white')]}])
-                styler.apply(lambda x: ['background-color: rgba(76, 175, 80, 0.2); color: #fff' if x['Tipo'] == 'Receita' 
-                                      else 'background-color: rgba(244, 67, 54, 0.2); color: #fff' for _ in x], axis=1)
-                styler.format({'Valor': 'R$ {:,.2f}'})
-                return styler
-
-            st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
-            
-            st.divider()
-            col_d1, col_d2 = st.columns([1, 4])
-            with col_d1:
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    df_export = display_df.copy()
-                    df_export['Valor'] = df_export['Valor'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    df_export.to_excel(writer, index=False, sheet_name='Extrato')
+            if not df.empty:
+                df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
                 
-                st.download_button(
-                    label="📥 Baixar Excel",
-                    data=buffer.getvalue(),
-                    file_name=f"extrato_smartwallet_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-            with col_d2:
-                # [MUDANÇA] Correção da variável user
-                if st.button("⚠️ Apagar Todos os Meus Dados"):
-                    try:
-                        db_manager.clear_data(user)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao reiniciar: {e}")
+                display_df = df.rename(columns={
+                    'amount': 'Valor', 'category': 'Categoria', 
+                    'description': 'Descrição', 'type': 'Tipo'
+                })[['Data', 'Tipo', 'Categoria', 'Descrição', 'Valor']]
+                
+                def apply_style(styler):
+                    styler.set_properties(**{'text-align': 'center', 'border': '1px solid #333'})
+                    styler.set_table_styles([{'selector': 'th', 'props': [('background-color', '#262730'), ('color', 'white')]}])
+                    styler.apply(lambda x: ['background-color: rgba(76, 175, 80, 0.2); color: #fff' if x['Tipo'] == 'Receita' 
+                                          else 'background-color: rgba(244, 67, 54, 0.2); color: #fff' for _ in x], axis=1)
+                    styler.format({'Valor': 'R$ {:,.2f}'})
+                    return styler
+
+                st.dataframe(apply_style(display_df.style), use_container_width=True, hide_index=True)
+                
+                st.divider()
+                col_d1, col_d2 = st.columns([1, 4])
+                with col_d1:
+                    buffer = io.BytesIO()
+                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                        df_export = display_df.copy()
+                        df_export['Valor'] = df_export['Valor'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        df_export.to_excel(writer, index=False, sheet_name='Extrato')
+                    
+                    st.download_button(
+                        label="📥 Baixar Excel",
+                        data=buffer.getvalue(),
+                        file_name=f"extrato_smartwallet_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                with col_d2:
+                    if st.button("⚠️ Apagar Todos os Meus Dados"):
+                        try:
+                            db_manager.clear_data(user)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao reiniciar: {e}")
+            else:
+                st.info("📝 Nenhum dado válido encontrado.")
         else:
-            # [MUDANÇA] Mensagem amigável de vazio
             st.info("📝 Seu extrato está vazio. Registre uma transação na aba 'Manual' ou 'Input IA'.")
 
     # 6. Consultor
