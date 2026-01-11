@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.15.0 (Clear Input Fix + Dynamic Toasts)
+Version: 4.15.1 (UI Fix: Wider Toasts & Text Wrapping)
 """
 
 import streamlit as st
@@ -111,6 +111,15 @@ st.markdown("""
     }
     .tips-title { font-weight: bold; color: #4CAF50; margin-bottom: 5px; display: block; }
     .tips-item { margin-left: 10px; display: block; margin-bottom: 3px; }
+    
+    /* [NOVO] FORMATAÇÃO DA NOTIFICAÇÃO (TOAST) MAIS COMPRIDA */
+    div[data-testid="stToast"] {
+        width: fit-content !important;
+        min-width: 350px !important;
+        max-width: 90vw !important; /* Ocupa até 90% da tela se precisar */
+        white-space: pre-wrap !important; /* Permite quebra de linha */
+        padding: 15px !important;
+    }
     
     div[data-testid="stMetricValue"] { font-size: 24px; }
     </style>
@@ -412,7 +421,6 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-        # [MUDANÇA] clear_on_submit=True limpa a caixa de texto após envio
         with st.form("nlp", clear_on_submit=True):
             txt = st.text_input("Descreva a transação:", placeholder="Ex: Almoço 45 reais, Uber 20, Recebi pix 100...")
             if st.form_submit_button("Processar") and txt:
@@ -424,12 +432,10 @@ def main():
                         
                         db_manager.insert_transaction(user, res['date'], res['amount'], res['category'], res['description'], res['type'])
                         
-                        # [MUDANÇA] Notificação Inteligente (Verde vs Vermelho)
+                        # Notificação Inteligente
                         if res['type'] == 'Receita':
-                            # Receita: Verde e com ícone
                             st.toast(f":green[💰 Receita Salva: {res['description']} (+ R$ {res['amount']})]", icon="✅")
                         else:
-                            # Despesa: Texto vermelho, SEM emoji (como pedido)
                             st.toast(f":red[Despesa Registrada: {res['description']} (- R$ {res['amount']})]", icon=None)
                         
                         time.sleep(1.5)
