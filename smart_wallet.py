@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.13.0 (Mobile Date Fix + Didactic Charts with Lines)
+Version: 4.13.1 (Tooltip Polish: BRL Currency & Portuguese Labels)
 """
 
 import streamlit as st
@@ -234,7 +234,6 @@ def fetch_market_data():
     timeout_val = 5
 
     try:
-        # 1. MOEDAS FIAT (AwesomeAPI)
         url_fiat = "https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL,GBP-BRL"
         resp_fiat = requests.get(url_fiat, headers=headers, timeout=timeout_val)
         if resp_fiat.status_code == 200:
@@ -243,7 +242,6 @@ def fetch_market_data():
             market_data["EUR"] = float(data['EURBRL']['bid'])
             market_data["GBP"] = float(data['GBPBRL']['bid'])
 
-        # 2. BITCOIN (MERCADO BITCOIN)
         r_btc = requests.get("https://www.mercadobitcoin.net/api/BTC/ticker/", headers=headers, timeout=timeout_val)
         if r_btc.status_code == 200:
             market_data["BTC"] = float(r_btc.json()['ticker']['last'])
@@ -404,7 +402,6 @@ def main():
     # 1. NLP
     with tabs[0]:
         st.markdown(f"#### 🗣️ Olá, {user}! Vamos organizar suas finanças?")
-        
         st.markdown("""
         <div class="tips-box">
             <span class="tips-title">💡 Dicas de uso da IA:</span>
@@ -457,21 +454,27 @@ def main():
             expense_data = df[df['type'] == 'Despesa'].groupby("category")['amount'].sum().reset_index()
             
             if not expense_data.empty:
-                # [MELHORIA VISUAL] Gráfico Didático (Setinha/Linha + Texto fora)
+                # [MÁGICA DO TOOLTIP] Cria coluna formatada em PT-BR para exibir no mouse over
+                expense_data['formatted_amount'] = expense_data['amount'].apply(
+                    lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                )
+
                 fig = px.pie(expense_data, values='amount', names='category', 
                              color_discrete_sequence=px.colors.qualitative.Set3,
-                             hole=0.55) # Furo do donut
+                             hole=0.55,
+                             custom_data=['formatted_amount']) # Passa o dado formatado
                 
                 fig.update_traces(
-                    textposition='outside', # Força o texto para fora
-                    textinfo='label+percent', # Mostra "Alimentação 20%"
-                    pull=[0.02] * len(expense_data), # Pequena explosão para separar fatias
-                    marker=dict(line=dict(color='#000000', width=1)) # Borda preta para contraste
+                    textposition='outside', 
+                    textinfo='label+percent', 
+                    pull=[0.02] * len(expense_data), 
+                    marker=dict(line=dict(color='#000000', width=1)),
+                    # Configura o tooltip para usar o dado formatado
+                    hovertemplate='<b>%{label}</b><br>Valor: %{customdata[0]}<extra></extra>'
                 )
                 
-                # Ajuste de layout para mobile (Margens maiores para caber o texto)
                 fig.update_layout(
-                    showlegend=False, # Remove a legenda lateral (já está no gráfico)
+                    showlegend=False, 
                     margin=dict(t=40, b=40, l=40, r=40), 
                     paper_bgcolor="rgba(0,0,0,0)", 
                     plot_bgcolor="rgba(0,0,0,0)",
@@ -502,10 +505,7 @@ def main():
     with tabs[4]:
         df = db_manager.fetch_all(user)
         if not df.empty:
-            # [CORREÇÃO CRÍTICA] Trata erro de data no Mobile (errors='coerce')
             df['date'] = pd.to_datetime(df['date'], errors='coerce')
-            
-            # Remove linhas onde a data falhou (virou NaT)
             df = df.dropna(subset=['date'])
             
             if not df.empty:
