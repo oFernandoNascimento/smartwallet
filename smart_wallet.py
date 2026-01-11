@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.18.0 (Safety Dialogs + Forgot Password UI + Max Speed)
+Version: 4.19.0 (Clean Login + Privacy Mode Feature)
 """
 
 import streamlit as st
@@ -112,7 +112,7 @@ st.markdown("""
     .tips-title { font-weight: bold; color: #4CAF50; margin-bottom: 5px; display: block; }
     .tips-item { margin-left: 10px; display: block; margin-bottom: 3px; }
     
-    /* FORMATAÇÃO DA NOTIFICAÇÃO (TOAST) MAIS COMPRIDA */
+    /* TOAST LARGO */
     div[data-testid="stToast"] {
         width: fit-content !important;
         min-width: 350px !important;
@@ -250,7 +250,7 @@ class CloudTransactionDAO:
 
 db_manager = CloudTransactionDAO()
 
-# --- DADOS DE MERCADO (FEED SEMPRE ONLINE) ---
+# --- DADOS DE MERCADO ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_data():
     market_data = {
@@ -276,7 +276,7 @@ def fetch_market_data():
     
     return market_data
 
-# --- GERADOR DE GRÁFICO SVG ---
+# --- GRÁFICO SVG ---
 def get_svg_chart(is_up):
     color = "#4CAF50" if is_up else "#F44336"
     fill_color = "rgba(76, 175, 80, 0.2)" if is_up else "rgba(244, 67, 54, 0.2)"
@@ -326,7 +326,7 @@ def generate_financial_report(df, market_data):
     except Exception:
         return "Serviço de consultoria indisponível no momento."
 
-# --- [NOVO] MODAL DE CONFIRMAÇÃO DE EXCLUSÃO ---
+# --- MODAL DE CONFIRMAÇÃO DE EXCLUSÃO ---
 @st.dialog("⚠️ Confirmação de Segurança")
 def show_delete_confirmation(user_to_delete):
     st.write("Você tem certeza absoluta? Essa ação não pode ser desfeita.")
@@ -399,27 +399,22 @@ def login_flow():
                         st.rerun()
                     else:
                         st.error("Dados incorretos.")
-            
-            # [NOVO] Botão de "Esqueci minha senha" (Simulação)
-            if st.button("Esqueci minha senha", type="tertiary"):
-                email_rec = st.text_input("Digite seu e-mail cadastrado:")
-                if email_rec:
-                    if "@" in email_rec:
-                        st.toast(f"📧 E-mail de recuperação enviado para {email_rec}!", icon="📨")
-                        time.sleep(2)
-                    else:
-                        st.error("Digite um e-mail válido.")
-
+                        
         with tab2:
             with st.form("register"):
                 u = st.text_input("Novo Usuário", key="u_reg")
                 p = st.text_input("Senha", type="password", key="p_reg")
-                # Opcional: Pedir email aqui no futuro se quiser salvar no banco
                 if st.form_submit_button("Criar Conta", use_container_width=True):
                     ok, msg = db_manager.create_user(u, p)
                     if ok: st.success(msg)
                     else: st.error(msg)
     st.stop()
+
+# --- HELPER: FORMATAÇÃO PRIVADA ---
+def fmt_money(value, privacy_on):
+    if privacy_on:
+        return "R$ ****"
+    return f"R$ {value:,.2f}"
 
 # --- APP MAIN ---
 def main():
@@ -428,6 +423,10 @@ def main():
     with st.sidebar:
         st.header("👤 Perfil")
         st.success(f"Logado: **{user}**")
+        
+        # [NOVO] Toggle de Privacidade
+        privacy_mode = st.toggle("👁️ Ocultar Valores")
+        
         if st.button("Sair"):
             st.session_state['logged_in'] = False
             st.rerun()
@@ -498,9 +497,12 @@ def main():
         balance = inc - exp
         
         c1, c2, c3 = st.columns(3)
-        c1.metric("Entradas", f"R$ {inc:,.2f}")
-        c2.metric("Saídas", f"R$ {exp:,.2f}")
-        c3.metric("Saldo", f"R$ {balance:,.2f}", delta=f"{balance:,.2f}")
+        # [MUDANÇA] Aplica formatação de privacidade
+        c1.metric("Entradas", fmt_money(inc, privacy_mode))
+        c2.metric("Saídas", fmt_money(exp, privacy_mode))
+        
+        delta_val = f"{balance:,.2f}" if not privacy_mode else None
+        c3.metric("Saldo", fmt_money(balance, privacy_mode), delta=delta_val)
         
         st.divider()
         st.subheader("Análise de Despesas (Últimos lançamentos)")
@@ -548,14 +550,15 @@ def main():
         if not df.empty:
             inv = df[df['category'].isin(['Investimentos', 'Investimento'])]
             if not inv.empty:
-                st.metric("Total Investido", f"R$ {inv['amount'].sum():,.2f}")
+                # [MUDANÇA] Aplica privacidade no total investido
+                st.metric("Total Investido", fmt_money(inv['amount'].sum(), privacy_mode))
                 st.dataframe(inv[['date', 'description', 'amount']], use_container_width=True)
             else:
                 st.info("💰 Nenhum investimento registrado ainda. Comece investindo no futuro!")
         else:
             st.info("💰 Nenhum investimento registrado ainda. Comece investindo no futuro!")
 
-    # 5. EXTRATO (COM CONFIRMAÇÃO DE SEGURANÇA)
+    # 5. EXTRATO (COM DOWNLOAD COMPLETO)
     with tabs[4]:
         df_view = db_manager.fetch_all(user, limit=100)
         if not df_view.empty:
@@ -598,7 +601,6 @@ def main():
                         use_container_width=True
                     )
                 with col_d2:
-                    # [NOVO] Aciona a janela de confirmação (Modal)
                     if st.button("⚠️ Apagar Todos os Meus Dados"):
                         show_delete_confirmation(user)
             else:
