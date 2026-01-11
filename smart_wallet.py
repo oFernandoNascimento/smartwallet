@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.15.1 (UI Fix: Wider Toasts & Text Wrapping)
+Version: 4.16.0 (Max Performance: SQL Aggregation & Limit)
 """
 
 import streamlit as st
@@ -112,12 +112,12 @@ st.markdown("""
     .tips-title { font-weight: bold; color: #4CAF50; margin-bottom: 5px; display: block; }
     .tips-item { margin-left: 10px; display: block; margin-bottom: 3px; }
     
-    /* [NOVO] FORMATAÇÃO DA NOTIFICAÇÃO (TOAST) MAIS COMPRIDA */
+    /* FORMATAÇÃO DA NOTIFICAÇÃO (TOAST) MAIS COMPRIDA */
     div[data-testid="stToast"] {
         width: fit-content !important;
         min-width: 350px !important;
-        max-width: 90vw !important; /* Ocupa até 90% da tela se precisar */
-        white-space: pre-wrap !important; /* Permite quebra de linha */
+        max-width: 90vw !important;
+        white-space: pre-wrap !important;
         padding: 15px !important;
     }
     
@@ -125,7 +125,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- CAMADA DE PERSISTÊNCIA (CLOUD) ---
+# --- CAMADA DE PERSISTÊNCIA (CLOUD OTIMIZADA) ---
 class CloudTransactionDAO:
     def __init__(self):
         self.init_db()
@@ -207,14 +207,33 @@ class CloudTransactionDAO:
         except Exception:
             return False
 
-    def fetch_all(self, user_id):
+    # [NOVO] Função Ultra-Rápida para calcular Saldo Total direto no Banco
+    def get_totals(self, user_id):
         try:
             with self.get_connection() as conn:
-                df = pd.read_sql_query(
-                    "SELECT * FROM transactions WHERE user_id = %s ORDER BY date DESC, id DESC", 
-                    conn, 
-                    params=(user_id,)
-                )
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT type, SUM(amount) FROM transactions WHERE user_id = %s GROUP BY type",
+                        (user_id,)
+                    )
+                    results = dict(cursor.fetchall())
+                    return results.get('Receita', 0.0), results.get('Despesa', 0.0)
+        except Exception:
+            return 0.0, 0.0
+
+    # [OTIMIZADO] Agora aceita 'limit' para não travar o app com muitos dados
+    def fetch_all(self, user_id, limit=None):
+        try:
+            with self.get_connection() as conn:
+                query = "SELECT * FROM transactions WHERE user_id = %s ORDER BY date DESC, id DESC"
+                params = [user_id]
+                
+                if limit:
+                    query += " LIMIT %s"
+                    params.append(limit)
+                
+                df = pd.read_sql_query(query, conn, params=params)
+            
             if df.empty:
                 return pd.DataFrame(columns=['id', 'user_id', 'date', 'amount', 'category', 'description', 'type'])
             return df
@@ -432,7 +451,6 @@ def main():
                         
                         db_manager.insert_transaction(user, res['date'], res['amount'], res['category'], res['description'], res['type'])
                         
-                        # Notificação Inteligente
                         if res['type'] == 'Receita':
                             st.toast(f":green[💰 Receita Salva: {res['description']} (+ R$ {res['amount']})]", icon="✅")
                         else:
@@ -461,22 +479,25 @@ def main():
             time.sleep(1.5)
             st.rerun()
 
-    # 3. Dashboard
+    # 3. Dashboard (AGORA SUPER RÁPIDO)
     with tabs[2]:
-        df = db_manager.fetch_all(user)
-        if not df.empty:
-            inc = df[df['type'] == 'Receita']['amount'].sum()
-            exp = df[df['type'] == 'Despesa']['amount'].sum()
-            balance = inc - exp
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Entradas", f"R$ {inc:,.2f}")
-            c2.metric("Saídas", f"R$ {exp:,.2f}")
-            c3.metric("Saldo", f"R$ {balance:,.2f}", delta=f"{balance:,.2f}")
-            
-            st.divider()
-            st.subheader("Análise de Despesas por Categoria")
-            expense_data = df[df['type'] == 'Despesa'].groupby("category")['amount'].sum().reset_index()
+        # [OTIMIZAÇÃO 1] Pega os totais direto do banco (Instantâneo)
+        inc, exp = db_manager.get_totals(user)
+        balance = inc - exp
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Entradas", f"R$ {inc:,.2f}")
+        c2.metric("Saídas", f"R$ {exp:,.2f}")
+        c3.metric("Saldo", f"R$ {balance:,.2f}", delta=f"{balance:,.2f}")
+        
+        st.divider()
+        st.subheader("Análise de Despesas (Últimos lançamentos)")
+        
+        # [OTIMIZAÇÃO 2] Pega só as últimas 100 transações para o gráfico (Rápido)
+        df_recent = db_manager.fetch_all(user, limit=100)
+        
+        if not df_recent.empty:
+            expense_data = df_recent[df_recent['type'] == 'Despesa'].groupby("category")['amount'].sum().reset_index()
             
             if not expense_data.empty:
                 expense_data['formatted_amount'] = expense_data['amount'].apply(
@@ -507,13 +528,13 @@ def main():
                                   
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("Sem dados de despesa para visualização.")
+                st.info("Sem dados de despesa para visualização recente.")
         else:
             st.warning("Aguardando dados para gerar visualizações.")
 
     # 4. Investimentos
     with tabs[3]:
-        df = db_manager.fetch_all(user)
+        df = db_manager.fetch_all(user, limit=100)
         if not df.empty:
             inv = df[df['category'].isin(['Investimentos', 'Investimento'])]
             if not inv.empty:
@@ -524,17 +545,19 @@ def main():
         else:
             st.info("💰 Nenhum investimento registrado ainda. Comece investindo no futuro!")
 
-    # 5. EXTRATO
+    # 5. EXTRATO (COM DOWNLOAD COMPLETO)
     with tabs[4]:
-        df = db_manager.fetch_all(user)
-        if not df.empty:
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
-            df = df.dropna(subset=['date'])
+        # Para a tabela visual, carrega rápido (100 itens)
+        df_view = db_manager.fetch_all(user, limit=100)
+        
+        if not df_view.empty:
+            df_view['date'] = pd.to_datetime(df_view['date'], errors='coerce')
+            df_view = df_view.dropna(subset=['date'])
             
-            if not df.empty:
-                df['Data'] = df['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
+            if not df_view.empty:
+                df_view['Data'] = df_view['date'].dt.strftime('%d/%m/%Y %H:%M:%S')
                 
-                display_df = df.rename(columns={
+                display_df = df_view.rename(columns={
                     'amount': 'Valor', 'category': 'Categoria', 
                     'description': 'Descrição', 'type': 'Tipo'
                 })[['Data', 'Tipo', 'Categoria', 'Descrição', 'Valor']]
@@ -552,10 +575,13 @@ def main():
                 st.divider()
                 col_d1, col_d2 = st.columns([1, 4])
                 with col_d1:
+                    # [IMPORTANTE] Para o Excel, baixamos TUDO (sem limite)
+                    df_full = db_manager.fetch_all(user, limit=None)
+                    
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        df_export = display_df.copy()
-                        df_export['Valor'] = df_export['Valor'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                        df_export = df_full.copy()
+                        df_export['Valor'] = df_export['amount'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                         df_export.to_excel(writer, index=False, sheet_name='Extrato')
                     
                     st.download_button(
@@ -580,7 +606,8 @@ def main():
     # 6. Consultor
     with tabs[5]:
         if st.button("Gerar Análise de Expert"):
-            df = db_manager.fetch_all(user)
+            # Para análise, mandamos as últimas 500 para ser rápido mas ter contexto
+            df = db_manager.fetch_all(user, limit=500)
             if not df.empty:
                 with st.spinner("Analisando seus dados e o mercado financeiro..."):
                     st.write(generate_financial_report(df, market))
