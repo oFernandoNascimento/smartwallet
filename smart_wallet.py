@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.19.0 (Clean Login + Privacy Mode Feature)
+Version: 4.20.0 (Fix: Chart Margins, AI Stability & Privacy UI)
 """
 
 import streamlit as st
@@ -120,6 +120,9 @@ st.markdown("""
         white-space: pre-wrap !important;
         padding: 15px !important;
     }
+    
+    /* SALDO GRANDE COLORIDO */
+    .big-balance { font-size: 36px; font-weight: bold; font-family: 'Roboto', sans-serif; }
     
     div[data-testid="stMetricValue"] { font-size: 24px; }
     </style>
@@ -250,7 +253,7 @@ class CloudTransactionDAO:
 
 db_manager = CloudTransactionDAO()
 
-# --- DADOS DE MERCADO ---
+# --- DADOS DE MERCADO (FEED SEMPRE ONLINE) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_market_data():
     market_data = {
@@ -276,7 +279,7 @@ def fetch_market_data():
     
     return market_data
 
-# --- GRÁFICO SVG ---
+# --- GERADOR DE GRÁFICO SVG ---
 def get_svg_chart(is_up):
     color = "#4CAF50" if is_up else "#F44336"
     fill_color = "rgba(76, 175, 80, 0.2)" if is_up else "rgba(244, 67, 54, 0.2)"
@@ -290,8 +293,7 @@ def get_svg_chart(is_up):
 
     return f'<svg viewBox="0 0 100 100" class="chart-bg" preserveAspectRatio="none"><polygon points="{area_points}" fill="{fill_color}" /><polyline points="{points}" fill="none" stroke="{color}" stroke-width="3" vector-effect="non-scaling-stroke"/></svg>'
 
-# --- NLP OTIMIZADO ---
-@st.cache_resource
+# --- NLP OTIMIZADO (SEM CACHE DE SESSÃO PARA EVITAR ERROS) ---
 def get_gemini_model():
     return genai.GenerativeModel('gemini-1.5-flash')
 
@@ -326,7 +328,7 @@ def generate_financial_report(df, market_data):
     except Exception:
         return "Serviço de consultoria indisponível no momento."
 
-# --- MODAL DE CONFIRMAÇÃO DE EXCLUSÃO ---
+# --- MODAL DE CONFIRMAÇÃO ---
 @st.dialog("⚠️ Confirmação de Segurança")
 def show_delete_confirmation(user_to_delete):
     st.write("Você tem certeza absoluta? Essa ação não pode ser desfeita.")
@@ -343,6 +345,27 @@ def show_delete_confirmation(user_to_delete):
     with col_b:
         if st.button("Cancelar"):
             st.rerun()
+
+# --- HELPER: FORMATAÇÃO VISUAL DO SALDO ---
+def render_balance_card(label, value, is_balance=False, hide=False):
+    if hide:
+        display_val = "R$ ****"
+        color_style = "color: #ddd;"
+    else:
+        display_val = f"R$ {value:,.2f}"
+        if is_balance:
+            if value > 0: color_style = "color: #4CAF50;" # Verde
+            elif value < 0: color_style = "color: #F44336;" # Vermelho
+            else: color_style = "color: #FFFFFF;" # Branco
+        else:
+            color_style = "color: #FAFAFA;" # Padrão para Entradas/Saídas
+
+    st.markdown(f"""
+    <div style="background-color: #262730; padding: 10px; border-radius: 8px; border: 1px solid #333;">
+        <span style="font-size: 14px; color: #aaa;">{label}</span><br>
+        <span style="font-size: 26px; font-weight: bold; {color_style}">{display_val}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 # --- UI TICKER ---
 @st.fragment(run_every=3600)
@@ -399,7 +422,6 @@ def login_flow():
                         st.rerun()
                     else:
                         st.error("Dados incorretos.")
-                        
         with tab2:
             with st.form("register"):
                 u = st.text_input("Novo Usuário", key="u_reg")
@@ -410,12 +432,6 @@ def login_flow():
                     else: st.error(msg)
     st.stop()
 
-# --- HELPER: FORMATAÇÃO PRIVADA ---
-def fmt_money(value, privacy_on):
-    if privacy_on:
-        return "R$ ****"
-    return f"R$ {value:,.2f}"
-
 # --- APP MAIN ---
 def main():
     user = login_flow()
@@ -423,10 +439,6 @@ def main():
     with st.sidebar:
         st.header("👤 Perfil")
         st.success(f"Logado: **{user}**")
-        
-        # [NOVO] Toggle de Privacidade
-        privacy_mode = st.toggle("👁️ Ocultar Valores")
-        
         if st.button("Sair"):
             st.session_state['logged_in'] = False
             st.rerun()
@@ -493,19 +505,25 @@ def main():
 
     # 3. Dashboard
     with tabs[2]:
+        # Cabeçalho com o Toggle de Privacidade
+        col_title, col_eye = st.columns([6, 1])
+        with col_title:
+            st.subheader("Resumo Financeiro")
+        with col_eye:
+            privacy_mode = st.toggle("👁️ Ocultar", value=False)
+
+        # Totais
         inc, exp = db_manager.get_totals(user)
         balance = inc - exp
         
         c1, c2, c3 = st.columns(3)
-        # [MUDANÇA] Aplica formatação de privacidade
-        c1.metric("Entradas", fmt_money(inc, privacy_mode))
-        c2.metric("Saídas", fmt_money(exp, privacy_mode))
-        
-        delta_val = f"{balance:,.2f}" if not privacy_mode else None
-        c3.metric("Saldo", fmt_money(balance, privacy_mode), delta=delta_val)
+        with c1: render_balance_card("Entradas", inc, hide=privacy_mode)
+        with c2: render_balance_card("Saídas", exp, hide=privacy_mode)
+        with c3: render_balance_card("Saldo Total", balance, is_balance=True, hide=privacy_mode)
         
         st.divider()
-        st.subheader("Análise de Despesas (Últimos lançamentos)")
+        st.subheader("Análise de Despesas")
+        
         df_recent = db_manager.fetch_all(user, limit=100)
         
         if not df_recent.empty:
@@ -529,9 +547,10 @@ def main():
                     hovertemplate='<b>%{label}</b><br>Valor: %{customdata[0]}<extra></extra>'
                 )
                 
+                # [CORREÇÃO MARGEM] Aumentei para 80px para não cortar no mobile
                 fig.update_layout(
                     showlegend=False, 
-                    margin=dict(t=40, b=40, l=40, r=40), 
+                    margin=dict(t=80, b=80, l=80, r=80), 
                     paper_bgcolor="rgba(0,0,0,0)", 
                     plot_bgcolor="rgba(0,0,0,0)",
                     uniformtext_minsize=12, 
@@ -550,15 +569,14 @@ def main():
         if not df.empty:
             inv = df[df['category'].isin(['Investimentos', 'Investimento'])]
             if not inv.empty:
-                # [MUDANÇA] Aplica privacidade no total investido
-                st.metric("Total Investido", fmt_money(inv['amount'].sum(), privacy_mode))
+                st.metric("Total Investido", f"R$ {inv['amount'].sum():,.2f}")
                 st.dataframe(inv[['date', 'description', 'amount']], use_container_width=True)
             else:
                 st.info("💰 Nenhum investimento registrado ainda. Comece investindo no futuro!")
         else:
             st.info("💰 Nenhum investimento registrado ainda. Comece investindo no futuro!")
 
-    # 5. EXTRATO (COM DOWNLOAD COMPLETO)
+    # 5. EXTRATO
     with tabs[4]:
         df_view = db_manager.fetch_all(user, limit=100)
         if not df_view.empty:
@@ -608,7 +626,7 @@ def main():
         else:
             st.info("📝 Seu extrato está vazio. Registre uma transação na aba 'Manual' ou 'Input IA'.")
 
-    # 6. Consultor
+    # 6. Consultor (DESTROVADO - SEM CACHE)
     with tabs[5]:
         if st.button("Gerar Análise de Expert"):
             df = db_manager.fetch_all(user, limit=500)
