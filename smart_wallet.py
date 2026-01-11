@@ -5,7 +5,7 @@ Desenvolvido como projeto de portfólio para demonstração de habilidades técn
 
 Author: Fernando Teixeira do Nascimento
 Date: 10/01/2026
-Version: 4.16.0 (Max Performance: SQL Aggregation & Limit)
+Version: 4.18.0 (Safety Dialogs + Forgot Password UI + Max Speed)
 """
 
 import streamlit as st
@@ -207,7 +207,6 @@ class CloudTransactionDAO:
         except Exception:
             return False
 
-    # [NOVO] Função Ultra-Rápida para calcular Saldo Total direto no Banco
     def get_totals(self, user_id):
         try:
             with self.get_connection() as conn:
@@ -221,7 +220,6 @@ class CloudTransactionDAO:
         except Exception:
             return 0.0, 0.0
 
-    # [OTIMIZADO] Agora aceita 'limit' para não travar o app com muitos dados
     def fetch_all(self, user_id, limit=None):
         try:
             with self.get_connection() as conn:
@@ -292,56 +290,59 @@ def get_svg_chart(is_up):
 
     return f'<svg viewBox="0 0 100 100" class="chart-bg" preserveAspectRatio="none"><polygon points="{area_points}" fill="{fill_color}" /><polyline points="{points}" fill="none" stroke="{color}" stroke-width="3" vector-effect="non-scaling-stroke"/></svg>'
 
-# --- NLP ---
+# --- NLP OTIMIZADO ---
+@st.cache_resource
+def get_gemini_model():
+    return genai.GenerativeModel('gemini-1.5-flash')
+
 def process_natural_language_input(text, market_data):
     prompt = f"""
-    Role: Financial Data Parser.
-    Context Date: {datetime.now(fuso_br).strftime('%Y-%m-%d')}
-    User Input: "{text}"
-    Reference Rates: USD={market_data['USD']}, EUR={market_data['EUR']}, GBP={market_data['GBP']}, BTC={market_data['BTC']}
-    Output JSON: {{ "amount": float, "category": "string", "date": "YYYY-MM-DD", "description": "string", "type": "Receita" or "Despesa" }}
+    Context: {datetime.now(fuso_br).strftime('%Y-%m-%d')}
+    Input: "{text}"
+    Rates: USD={market_data['USD']}, EUR={market_data['EUR']}, GBP={market_data['GBP']}, BTC={market_data['BTC']}
+    Return JSON: {{ "amount": float, "category": "string", "date": "YYYY-MM-DD", "description": "string", "type": "Receita" or "Despesa" }}
     """
-    models = ['gemini-2.5-flash', 'gemini-pro']
-    for model_name in models:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            clean_text = response.text.replace("```json", "").replace("```", "").strip()
-            match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-            if match:
-                payload = json.loads(match.group(0))
-                if all(k in payload for k in ('amount', 'category', 'type')):
-                    return payload
-        except Exception:
-            continue
+    try:
+        model = get_gemini_model()
+        response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.0))
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        match = re.search(r'\{.*\}', clean_text, re.DOTALL)
+        if match:
+            payload = json.loads(match.group(0))
+            if all(k in payload for k in ('amount', 'category', 'type')):
+                return payload
+    except Exception:
+        return {"error": "Não foi possível processar."}
     return {"error": "Não foi possível processar."}
 
 # --- CONSULTOR FINANCEIRO ---
 def generate_financial_report(df, market_data):
     if df.empty: return "Dados insuficientes para análise."
-    
-    resumo_mercado = f"""
-    Dólar: R$ {market_data['USD']}
-    Euro: R$ {market_data['EUR']}
-    Bitcoin: R$ {market_data['BTC']}
-    """
-    
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = f"""
-        ATUE COMO: Um Consultor Financeiro de Elite.
-        DADOS: {df.to_string()}
-        MERCADO: {resumo_mercado}
-        OBJETIVO: Relatório financeiro detalhado em PT-BR.
-        ESTRUTURA:
-        1. Diagnóstico Executivo (Fluxo de caixa, saúde financeira).
-        2. Análise de Gastos.
-        3. Estratégia de Investimentos (Baseado no mercado).
-        4. Plano de Ação.
-        """
+        model = get_gemini_model()
+        resumo_mercado = f"Dólar: R$ {market_data['USD']}, BTC: R$ {market_data['BTC']}"
+        prompt = f"ATUE COMO: Consultor Financeiro. DADOS: {df.to_string()} MERCADO: {resumo_mercado}. OBJETIVO: Relatório financeiro detalhado em PT-BR."
         return model.generate_content(prompt).text
     except Exception:
         return "Serviço de consultoria indisponível no momento."
+
+# --- [NOVO] MODAL DE CONFIRMAÇÃO DE EXCLUSÃO ---
+@st.dialog("⚠️ Confirmação de Segurança")
+def show_delete_confirmation(user_to_delete):
+    st.write("Você tem certeza absoluta? Essa ação não pode ser desfeita.")
+    st.warning("Todo o seu histórico financeiro será apagado permanentemente.")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("Sim, apagar tudo", type="primary"):
+            try:
+                db_manager.clear_data(user_to_delete)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro: {e}")
+    with col_b:
+        if st.button("Cancelar"):
+            st.rerun()
 
 # --- UI TICKER ---
 @st.fragment(run_every=3600)
@@ -398,10 +399,22 @@ def login_flow():
                         st.rerun()
                     else:
                         st.error("Dados incorretos.")
+            
+            # [NOVO] Botão de "Esqueci minha senha" (Simulação)
+            if st.button("Esqueci minha senha", type="tertiary"):
+                email_rec = st.text_input("Digite seu e-mail cadastrado:")
+                if email_rec:
+                    if "@" in email_rec:
+                        st.toast(f"📧 E-mail de recuperação enviado para {email_rec}!", icon="📨")
+                        time.sleep(2)
+                    else:
+                        st.error("Digite um e-mail válido.")
+
         with tab2:
             with st.form("register"):
                 u = st.text_input("Novo Usuário", key="u_reg")
                 p = st.text_input("Senha", type="password", key="p_reg")
+                # Opcional: Pedir email aqui no futuro se quiser salvar no banco
                 if st.form_submit_button("Criar Conta", use_container_width=True):
                     ok, msg = db_manager.create_user(u, p)
                     if ok: st.success(msg)
@@ -479,9 +492,8 @@ def main():
             time.sleep(1.5)
             st.rerun()
 
-    # 3. Dashboard (AGORA SUPER RÁPIDO)
+    # 3. Dashboard
     with tabs[2]:
-        # [OTIMIZAÇÃO 1] Pega os totais direto do banco (Instantâneo)
         inc, exp = db_manager.get_totals(user)
         balance = inc - exp
         
@@ -492,8 +504,6 @@ def main():
         
         st.divider()
         st.subheader("Análise de Despesas (Últimos lançamentos)")
-        
-        # [OTIMIZAÇÃO 2] Pega só as últimas 100 transações para o gráfico (Rápido)
         df_recent = db_manager.fetch_all(user, limit=100)
         
         if not df_recent.empty:
@@ -545,11 +555,9 @@ def main():
         else:
             st.info("💰 Nenhum investimento registrado ainda. Comece investindo no futuro!")
 
-    # 5. EXTRATO (COM DOWNLOAD COMPLETO)
+    # 5. EXTRATO (COM CONFIRMAÇÃO DE SEGURANÇA)
     with tabs[4]:
-        # Para a tabela visual, carrega rápido (100 itens)
         df_view = db_manager.fetch_all(user, limit=100)
-        
         if not df_view.empty:
             df_view['date'] = pd.to_datetime(df_view['date'], errors='coerce')
             df_view = df_view.dropna(subset=['date'])
@@ -575,9 +583,7 @@ def main():
                 st.divider()
                 col_d1, col_d2 = st.columns([1, 4])
                 with col_d1:
-                    # [IMPORTANTE] Para o Excel, baixamos TUDO (sem limite)
                     df_full = db_manager.fetch_all(user, limit=None)
-                    
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                         df_export = df_full.copy()
@@ -592,12 +598,9 @@ def main():
                         use_container_width=True
                     )
                 with col_d2:
+                    # [NOVO] Aciona a janela de confirmação (Modal)
                     if st.button("⚠️ Apagar Todos os Meus Dados"):
-                        try:
-                            db_manager.clear_data(user)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao reiniciar: {e}")
+                        show_delete_confirmation(user)
             else:
                 st.info("📝 Nenhum dado válido encontrado.")
         else:
@@ -606,7 +609,6 @@ def main():
     # 6. Consultor
     with tabs[5]:
         if st.button("Gerar Análise de Expert"):
-            # Para análise, mandamos as últimas 500 para ser rápido mas ter contexto
             df = db_manager.fetch_all(user, limit=500)
             if not df.empty:
                 with st.spinner("Analisando seus dados e o mercado financeiro..."):
