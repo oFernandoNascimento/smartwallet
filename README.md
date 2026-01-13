@@ -1,30 +1,35 @@
-# 💼 SmartWallet Portfolio
+# 💲 SmartWallet
 
-> Sistema de Gestão Financeira Inteligente com Processamento de Linguagem Natural (NLP).
+O SmartWallet é um gerenciador financeiro pessoal focado em **reduzir a fricção** no registro de despesas. Em vez de preencher formulários manuais, o usuário envia comandos de texto ou áudio (ex: *"Gastei 50 reais no Uber"*), e o sistema processa, categoriza e salva automaticamente.
 
-O **SmartWallet** é uma aplicação Full-Stack desenvolvida em Python que utiliza Inteligência Artificial Generativa (Google Gemini) para transformar comandos de texto informais em registros financeiros estruturados.
+O projeto utiliza uma arquitetura híbrida de processamento: **Regex Local** para transações simples (custo zero e latência nula) e **Google Gemini (LLM)** para interpretação de contextos complexos, conversão de moedas e análise de comprovantes.
 
-![Status](https://img.shields.io/badge/Status-Concluído-success)
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.41-red)
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-1.41-FF4B4B?style=flat&logo=streamlit&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Binary-336791?style=flat&logo=postgresql&logoColor=white)
 
-## 🚀 Funcionalidades Principais
+## 🎯 Funcionalidades
 
-* **🧠 Registro via NLP:** Digite *"Gastei 50 dólares em livros"* e o sistema identifica o valor, converte a moeda, categoriza e salva.
-* **💹 Cotações em Tempo Real:** Monitoramento ao vivo de USD, EUR, GBP e BTC com atualização automática (Auto-Refresh).
-* **🛡️ Arquitetura Robusta:** Sistema de fallback para IA e tratamento de erros de banco de dados (SQLite).
-* **📊 Dashboard Interativo:** Gráficos dinâmicos com Plotly e análises de fluxo de caixa.
-* **💡 Consultor IA:** Módulo que analisa seu histórico e gera diagnósticos financeiros racionais.
+-   **Processamento Híbrido (NLP):**
+    -   ⚡ **Motor Local:** Detecta padrões simples via Regex instantaneamente.
+    -   🧠 **Motor LLM:** Aciona a API do Gemini apenas para áudios ou frases complexas que requerem inferência.
+-   **Multi-Moeda:** Conversão automática de valores (USD, EUR, BTC, ETH) para BRL no momento do registro, utilizando cotações em tempo real.
+-   **Gestão de Comprovantes:** Upload e armazenamento de arquivos (PDF/Imagens) vinculados à transação no banco de dados.
+-   **Recorrência Inteligente:** Sistema para lançar automaticamente contas fixas mensais.
+-   **Relatórios e Exportação:** Dashboard interativo com Plotly e exportação de extratos formatados em Excel (.xlsx) e PDF.
+-   **Segurança:** Autenticação com Hashing (SHA-256) e Salt dinâmico via variáveis de ambiente.
 
-## 🛠️ Tecnologias Utilizadas
+## 🏗️ Arquitetura do Projeto
 
-* **Frontend/Backend:** Streamlit
-* **IA/LLM:** Google Gemini API (Modelo 2.5 Flash)
-* **Banco de Dados:** SQLite3 (DAO Pattern)
-* **Visualização:** Plotly Express & Pandas
+O projeto foi refatorado para seguir princípios de **Clean Architecture** e **DDD (Domain Driven Design)**, separando responsabilidades:
 
-## 📦 Como Rodar o Projeto
-
-1. Clone o repositório:
-```bash
-git clone [https://github.com/SEU-USUARIO/smartwallet.git](https://github.com/SEU-USUARIO/smartwallet.git)
+```text
+smartwallet/
+├── src/
+│   ├── ai_engine.py    # Lógica híbrida (Regex/Gemini) e fallback de modelos
+│   ├── auth.py         # Gerenciamento de Hash, Salt e validação de senhas
+│   ├── database.py     # Camada de persistência (PostgreSQL) com padrão Singleton
+│   ├── ui.py           # Componentes visuais e injeção de CSS
+│   └── utils.py        # Validadores de domínio e integrações externas (APIs)
+├── main.py             # Ponto de entrada e orquestração do Streamlit
+└── requirements.txt    # Dependências
