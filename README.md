@@ -23,7 +23,7 @@ O projeto utiliza uma arquitetura híbrida de processamento: **Regex Local** par
 
 ### 📊 Dashboard Interativo
 Visão geral das finanças com gráficos dinâmicos e KPIs em tempo real.
-![Dashboard](assets/Dashboard_view.png)
+![Dashboard](assets/Dashboard%20view.png)
 
 ### 🤖 Inteligência Artificial (NLP)
 Registro de despesas via comando de texto natural ou voz.
