@@ -1,7 +1,10 @@
-streamlit
+streamlit>=1.41.0
 google-generativeai
 pandas
 plotly
 requests
 pytz
 psycopg2-binary
+openpyxl
+fpdf
+python-dotenv

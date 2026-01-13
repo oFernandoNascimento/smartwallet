@@ -29,7 +29,6 @@ CATEGORIAS_BASE = ["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", 
 def header_relogio(mkt):
     now = datetime.now(FUSO_BR)
     d_str = now.strftime("%A, %d de %B de %Y")
-    # Tradução manual para garantir PT-BR independente do servidor
     t_map = {"Monday":"Segunda","Tuesday":"Terça","Wednesday":"Quarta","Thursday":"Quinta","Friday":"Sexta","Saturday":"Sábado","Sunday":"Domingo",
              "January":"Janeiro","February":"Fevereiro","March":"Março","April":"Abril","May":"Maio","June":"Junho","July":"Julho","August":"Agosto","September":"Setembro","October":"Outubro","November":"Novembro","December":"Dezembro"}
     for en, pt in t_map.items(): d_str = d_str.replace(en, pt)
@@ -110,7 +109,6 @@ def main():
             end_date = next_month - timedelta(days=next_month.day)
             st.caption(f"De: {start_date.strftime('%d/%m')} até {end_date.strftime('%d/%m')}")
         else:
-            # [CORREÇÃO] Forçando formato brasileiro DD/MM/YYYY
             d_range = st.date_input("Selecione o intervalo", [], format="DD/MM/YYYY")
             if len(d_range) == 2: start_date, end_date = d_range
             else: st.warning("Selecione data inicial e final.")
@@ -143,12 +141,16 @@ def main():
             st.markdown(f"""<div class="market-card {trend_class}">{svg}<div class="label-coin">{n}</div><div class="value-coin">{s} {UIManager.format_money(val).replace('R$ ','')}</div></div>""", unsafe_allow_html=True)
     st.divider()
 
-    tabs = st.tabs(["🤖 IA Rápida", "✍️ Manual", "📊 Dashboard", "💰 Investimentos", "🎯 Metas", "📑 Extrato", "🧠 Coach"])
+    tabs = st.tabs(["🤖 IA Híbrida", "✍️ Manual", "📊 Dashboard", "💰 Investimentos", "🎯 Metas", "📑 Extrato", "🧠 Coach"])
 
     with tabs[0]:
-        st.markdown("""<div style="margin-bottom: 20px;"><h2 style="font-weight: 600; color: #fff;">💬 Assistente Financeiro</h2><p style="color: #888; font-size: 14px;">Digite ou grave um áudio.</p></div>""", unsafe_allow_html=True)
+        st.markdown("""<div style="margin-bottom: 20px;"><h2 style="font-weight: 600; color: #fff;">💬 Assistente Híbrido</h2><p style="color: #888; font-size: 14px;">Processamento Dual: Regex (Local/Rápido) + LLM (Gemini).</p></div>""", unsafe_allow_html=True)
+        
+        # Aviso de Privacidade implementado conforme feedback
+        st.caption("🔒 **Privacidade:** Transações complexas podem ser processadas pela API do Google Gemini. Dados sensíveis não são armazenados para treino.")
+        
         with st.container(border=True):
-            st.info("💡 **Dicas:** 'Gastei 50 no Uber', 'Recebi 2000 de pix'")
+            st.info("💡 **Dicas:** 'Gastei 50 no Uber' (Processado Localmente) ou envie áudio para análise complexa.")
             c_input, c_mic = st.columns([5, 1], vertical_alignment="bottom")
             with c_input:
                 with st.form("ia_text", clear_on_submit=True):
@@ -158,18 +160,25 @@ def main():
                 audio_val = st.audio_input("🎙️ Gravar", label_visibility="visible", key=f"audio_{st.session_state.audio_key}")
 
             if audio_val:
-                with st.spinner("🎙️ Processando áudio..."):
+                with st.spinner("🎙️ Processando áudio (Nuvem)..."):
                     res = AIManager.process_audio_nlp(audio_val, mkt, user_cats)
                     if "error" not in res:
                         db.add_transaction(user, datetime.now(FUSO_BR), res['amount'], res['category'], res['description'], res['type'])
                         st.toast(f"{res['type']} de R$ {res['amount']} registrada!", icon="✅"); st.session_state.audio_key += 1; time.sleep(1.0); st.rerun()
                     else: st.error(res['error'])
             elif submitted_text and txt:
-                with st.spinner("🤖 Lendo texto..."):
+                with st.spinner("⚡ Analisando comando..."):
                     res = AIManager.process_nlp(txt, mkt, user_cats)
                     if "error" not in res:
                         db.add_transaction(user, datetime.now(FUSO_BR), res['amount'], res['category'], res['description'], res['type'])
-                        st.toast(f"{res['type']} de R$ {res['amount']} registrada!", icon="✅"); time.sleep(1.5); st.rerun()
+                        
+                        # Feedback visual se foi Local ou IA
+                        if res.get("source") == "Local/Regex":
+                            st.toast(f"⚡ Processado Localmente (Regex): R$ {res['amount']}", icon="🚀")
+                        else:
+                            st.toast(f"🤖 Processado via Gemini: R$ {res['amount']}", icon="✨")
+                            
+                        time.sleep(1.5); st.rerun()
                     else: st.error(res['error'])
 
     with tabs[1]:
@@ -254,7 +263,6 @@ def main():
             else: st.info("Nenhum registro em 'Investimentos'.")
         else: st.info("Sem dados.")
 
-    # 5. Metas (GRÁFICO FINALMENTE ARRUMADO!)
     with tabs[4]:
         c_h, c_b = st.columns([4,1])
         c_h.markdown("#### 🎯 Metas de Gastos")
@@ -282,7 +290,6 @@ def main():
                 pct = s / l if l > 0 else 0
                 bar_color = "#4CAF50" if pct < 0.75 else "#FFC107" if pct < 1.0 else "#FF5252"
 
-                # CORREÇÃO: Gráfico aumentado (250px) e margens ajustadas para não cortar
                 fig = go.Figure(go.Indicator(
                     mode = "gauge+number", value = s,
                     domain = {'x': [0, 1], 'y': [0, 1]},
@@ -295,7 +302,6 @@ def main():
                         'threshold': {'line': {'color': "white", 'width': 2}, 'thickness': 0.25, 'value': l}
                     }
                 ))
-                # Margens otimizadas: Topo 50, Altura 250
                 fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font={'color': "white", 'family': "Poppins"}, height=250, margin=dict(l=25, r=25, t=50, b=20))
                 
                 with cols[idx % 3]:
@@ -337,7 +343,6 @@ def main():
                 data_fmt = r['date'].strftime('%d/%m %H:%M') if pd.notnull(r['date']) else "--/--"
                 val = f"R$ {r['amount']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 
-                # [CORREÇÃO FINAL] Tradutor visual de 'expense' -> 'Despesa'
                 tipo_display = r['type']
                 if str(tipo_display).lower() in ['expense', 'outcome']: tipo_display = 'Despesa'
                 elif str(tipo_display).lower() in ['income', 'entry']: tipo_display = 'Receita'
