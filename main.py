@@ -7,12 +7,20 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import pytz
 import os
+import locale
 
 # Importando módulos da estrutura
 from src.database import RobustDatabase
 from src.ai_engine import AIManager
 from src.ui import UIManager
 from src.utils import get_market_data, DocGenerator
+
+# Tenta forçar Locale PT-BR
+try:
+    locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+except:
+    try: locale.setlocale(locale.LC_ALL, 'Portuguese_Brazil.1252')
+    except: pass
 
 # Configuração da página
 st.set_page_config(
@@ -28,10 +36,14 @@ CATEGORIAS_BASE = ["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", 
 @st.fragment(run_every=10) 
 def header_relogio(mkt):
     now = datetime.now(FUSO_BR)
-    d_str = now.strftime("%A, %d de %B de %Y")
-    t_map = {"Monday":"Segunda","Tuesday":"Terça","Wednesday":"Quarta","Thursday":"Quinta","Friday":"Sexta","Saturday":"Sábado","Sunday":"Domingo",
-             "January":"Janeiro","February":"Fevereiro","March":"Março","April":"Abril","May":"Maio","June":"Junho","July":"Julho","August":"Agosto","September":"Setembro","October":"Outubro","November":"Novembro","December":"Dezembro"}
-    for en, pt in t_map.items(): d_str = d_str.replace(en, pt)
+    d_str = now.strftime("%A, %d de %B de %Y").title()
+    
+    t_map = {
+        "Monday":"Segunda","Tuesday":"Terça","Wednesday":"Quarta","Thursday":"Quinta","Friday":"Sexta","Saturday":"Sábado","Sunday":"Domingo",
+        "January":"Janeiro","February":"Fevereiro","March":"Março","April":"Abril","May":"Maio","June":"Junho","July":"Julho","August":"Agosto","September":"Setembro","October":"Outubro","November":"Novembro","December":"Dezembro"
+    }
+    if "Monday" in d_str or "January" in d_str or "," in d_str: 
+        for en, pt in t_map.items(): d_str = d_str.replace(en, pt)
     
     c1, c2 = st.columns([3, 1])
     c1.markdown(f"### {d_str} | {now.strftime('%H:%M:%S')}")
@@ -43,7 +55,6 @@ def main():
     db = RobustDatabase()
     AIManager.configure()
     
-    # Inicialização de Variáveis
     if 'audio_key' not in st.session_state: st.session_state.audio_key = 0
     if 'history_mkt' not in st.session_state: st.session_state.history_mkt = {}
     if 'logged_in' not in st.session_state: st.session_state.logged_in = False
@@ -141,16 +152,12 @@ def main():
             st.markdown(f"""<div class="market-card {trend_class}">{svg}<div class="label-coin">{n}</div><div class="value-coin">{s} {UIManager.format_money(val).replace('R$ ','')}</div></div>""", unsafe_allow_html=True)
     st.divider()
 
-    tabs = st.tabs(["🤖 IA Híbrida", "✍️ Manual", "📊 Dashboard", "💰 Investimentos", "🎯 Metas", "📑 Extrato", "🧠 Coach"])
+    tabs = st.tabs(["🤖 IA Rápida", "✍️ Manual", "📊 Dashboard", "💰 Investimentos", "🎯 Metas", "📑 Extrato", "🧠 Coach"])
 
     with tabs[0]:
-        st.markdown("""<div style="margin-bottom: 20px;"><h2 style="font-weight: 600; color: #fff;">💬 Assistente Híbrido</h2><p style="color: #888; font-size: 14px;">Processamento Dual: Regex (Local/Rápido) + LLM (Gemini).</p></div>""", unsafe_allow_html=True)
-        
-        # Aviso de Privacidade implementado conforme feedback
-        st.caption("🔒 **Privacidade:** Transações complexas podem ser processadas pela API do Google Gemini. Dados sensíveis não são armazenados para treino.")
-        
+        st.markdown("""<div style="margin-bottom: 20px;"><h2 style="font-weight: 600; color: #fff;">💬 Assistente Financeiro</h2><p style="color: #888; font-size: 14px;">Digite ou grave um áudio.</p></div>""", unsafe_allow_html=True)
         with st.container(border=True):
-            st.info("💡 **Dicas:** 'Gastei 50 no Uber' (Processado Localmente) ou envie áudio para análise complexa.")
+            st.info("💡 **Dicas:** 'Gastei 50 no Uber', 'Recebi 2000 de pix', 'Comprei mouse por 25 dolares'")
             c_input, c_mic = st.columns([5, 1], vertical_alignment="bottom")
             with c_input:
                 with st.form("ia_text", clear_on_submit=True):
@@ -160,23 +167,22 @@ def main():
                 audio_val = st.audio_input("🎙️ Gravar", label_visibility="visible", key=f"audio_{st.session_state.audio_key}")
 
             if audio_val:
-                with st.spinner("🎙️ Processando áudio (Nuvem)..."):
+                with st.spinner("🎙️ Processando áudio..."):
                     res = AIManager.process_audio_nlp(audio_val, mkt, user_cats)
                     if "error" not in res:
                         db.add_transaction(user, datetime.now(FUSO_BR), res['amount'], res['category'], res['description'], res['type'])
                         st.toast(f"{res['type']} de R$ {res['amount']} registrada!", icon="✅"); st.session_state.audio_key += 1; time.sleep(1.0); st.rerun()
                     else: st.error(res['error'])
             elif submitted_text and txt:
-                with st.spinner("⚡ Analisando comando..."):
+                with st.spinner("🤖 Lendo texto..."):
                     res = AIManager.process_nlp(txt, mkt, user_cats)
                     if "error" not in res:
                         db.add_transaction(user, datetime.now(FUSO_BR), res['amount'], res['category'], res['description'], res['type'])
                         
-                        # Feedback visual se foi Local ou IA
-                        if res.get("source") == "Local/Regex":
-                            st.toast(f"⚡ Processado Localmente (Regex): R$ {res['amount']}", icon="🚀")
-                        else:
-                            st.toast(f"🤖 Processado via Gemini: R$ {res['amount']}", icon="✨")
+                        # [ATUALIZAÇÃO DE UI] Padronização das mensagens
+                        # Ícone varia só para debug visual (Foguete = Rápido/Local, Brilho = IA/Smart)
+                        ico = "🚀" if res.get('source') == "Local/Regex" else "✨"
+                        st.toast(f"{res['type']} de R$ {res['amount']} registrada!", icon=ico)
                             
                         time.sleep(1.5); st.rerun()
                     else: st.error(res['error'])
@@ -195,10 +201,14 @@ def main():
             ds = st.text_input("Descrição", value=default_desc)
         uploaded_file = st.file_uploader("Anexar Comprovante", type=['png', 'jpg', 'jpeg', 'pdf'])
         is_rec = st.checkbox("🔄 Repetir todo mês")
+        
+        l_date = st.date_input("Data do Registro", datetime.now(FUSO_BR), format="DD/MM/YYYY")
+
         if st.button("Salvar Registro"):
-            now = datetime.now(FUSO_BR)
-            db.add_transaction(user, now, vl, ct, ds, tp, uploaded_file, uploaded_file.name if uploaded_file else None)
-            if is_rec: db.add_recurring(user, ct, vl, ds, tp, now.day)
+            dt_final = datetime.combine(l_date, datetime.now(FUSO_BR).time())
+            
+            db.add_transaction(user, dt_final, vl, ct, ds, tp, uploaded_file, uploaded_file.name if uploaded_file else None)
+            if is_rec: db.add_recurring(user, ct, vl, ds, tp, dt_final.day)
             st.toast("Salvo!", icon="💾"); st.session_state.manual_form = {}; time.sleep(1); st.rerun()
 
     with tabs[2]:
@@ -269,7 +279,7 @@ def main():
         @st.dialog("Definir Meta")
         def modal_meta():
             ct = st.selectbox("Categoria", user_cats)
-            lm = st.number_input("Limite Mensal (R$)", 100.0, step=50.0)
+            lm = st.number_input("Limite Mensal (R$)", min_value=1.0, step=50.0, value=100.0)
             if st.button("Salvar Meta"): db.set_meta(user, ct, lm); st.rerun()
         
         @st.dialog("Excluir Meta?")
