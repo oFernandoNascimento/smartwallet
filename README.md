@@ -18,6 +18,8 @@ O projeto utiliza uma arquitetura híbrida de processamento: **Regex Local** par
 -   **Recorrência Inteligente:** Sistema para lançar automaticamente contas fixas mensais.
 -   **Relatórios e Exportação:** Dashboard interativo com Plotly e exportação de extratos formatados em Excel (.xlsx) e PDF.
 -   **Segurança:** Autenticação com Hashing (SHA-256) e Salt dinâmico via variáveis de ambiente.
+  
+📱  **LINK PARA ACESSAR A APLICAÇÂO:** - https://smartwallet-carteirateligente.streamlit.app/  
 
 ## 📸 Galeria do Projeto
 
