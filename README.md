@@ -19,6 +19,20 @@ O projeto utiliza uma arquitetura híbrida de processamento: **Regex Local** par
 -   **Relatórios e Exportação:** Dashboard interativo com Plotly e exportação de extratos formatados em Excel (.xlsx) e PDF.
 -   **Segurança:** Autenticação com Hashing (SHA-256) e Salt dinâmico via variáveis de ambiente.
 
+## 📸 Galeria do Projeto
+
+### 📊 Dashboard Interativo
+Visão geral das finanças com gráficos dinâmicos e KPIs em tempo real.
+![Dashboard](assets/Dashboard_view.png)
+
+### 🤖 Inteligência Artificial (NLP)
+Registro de despesas via comando de texto natural ou voz.
+![IA Demo](assets/ai_demo.png)
+
+### 📑 Relatórios e Extratos
+Gerenciamento completo com exportação profissional para Excel e PDF.
+![Relatórios](assets/reports_view.png)
+
 ## 🏗️ Arquitetura do Projeto
 
 O projeto foi refatorado para seguir princípios de **Clean Architecture** e **DDD (Domain Driven Design)**, separando responsabilidades:
