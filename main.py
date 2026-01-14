@@ -152,6 +152,14 @@ def main():
             st.markdown(f"""<div class="market-card {trend_class}">{svg}<div class="label-coin">{n}</div><div class="value-coin">{s} {UIManager.format_money(val).replace('R$ ','')}</div></div>""", unsafe_allow_html=True)
     st.divider()
 
+   
+    df_global = db.fetch_all(user, limit=None)
+    
+    # Pré-processamento global de datas
+    if not df_global.empty:
+        df_global['date'] = pd.to_datetime(df_global['date'], errors='coerce')
+        df_global = df_global.sort_values('date', ascending=False)
+    
     tabs = st.tabs(["🤖 IA Rápida", "✍️ Manual", "📊 Dashboard", "💰 Investimentos", "🎯 Metas", "📑 Extrato", "🧠 Coach"])
 
     with tabs[0]:
@@ -178,12 +186,8 @@ def main():
                     res = AIManager.process_nlp(txt, mkt, user_cats)
                     if "error" not in res:
                         db.add_transaction(user, datetime.now(FUSO_BR), res['amount'], res['category'], res['description'], res['type'])
-                        
-                        # [ATUALIZAÇÃO DE UI] Padronização das mensagens
-                        # Ícone varia só para debug visual (Foguete = Rápido/Local, Brilho = IA/Smart)
                         ico = "🚀" if res.get('source') == "Local/Regex" else "✨"
                         st.toast(f"{res['type']} de R$ {res['amount']} registrada!", icon=ico)
-                            
                         time.sleep(1.5); st.rerun()
                     else: st.error(res['error'])
 
@@ -216,8 +220,11 @@ def main():
             c_tit, c_eye = st.columns([6, 1])
             c_tit.subheader(f"Visão Geral: {start_date.strftime('%d/%m')} - {end_date.strftime('%d/%m')}")
             priv = c_eye.toggle("👁️", value=False)
+            
+            # Cálculo de totais
             inc, exp = db.get_totals(user, start_date, end_date)
             bal = inc - exp
+            
             k1, k2, k3 = st.columns(3)
             with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Entrou</div><div class="kpi-value" style="color:#4CAF50">{UIManager.format_money(inc, priv)}</div></div>', unsafe_allow_html=True)
             with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Saiu</div><div class="kpi-value" style="color:#F44336">{UIManager.format_money(exp, priv)}</div></div>', unsafe_allow_html=True)
@@ -225,7 +232,15 @@ def main():
                 cor = "#4CAF50" if bal >= 0 else "#F44336"
                 st.markdown(f'<div class="kpi-card"><div class="kpi-label">Saldo</div><div class="kpi-value" style="color:{cor}">{UIManager.format_money(bal, priv)}</div></div>', unsafe_allow_html=True)
             st.divider()
-            df_dash = db.fetch_all(user, start_date=start_date, end_date=end_date)
+            
+            # [OTIMIZAÇÃO] Filtra df_global em vez de chamar db.fetch_all
+            if not df_global.empty:
+                # Cria máscara de filtro por data
+                mask = (df_global['date'].dt.date >= start_date) & (df_global['date'].dt.date <= end_date)
+                df_dash = df_global.loc[mask]
+            else:
+                df_dash = pd.DataFrame(columns=df_global.columns)
+
             if not df_dash.empty:
                 df_exp = df_dash[df_dash['type']=='Despesa']
                 if not df_exp.empty:
@@ -247,11 +262,13 @@ def main():
 
     with tabs[3]:
         st.subheader("💰 Carteira de Investimentos")
-        df_all = db.fetch_all(user, limit=None)
+        # [OTIMIZAÇÃO] Usa df_global direto
+        df_all = df_global
+        
         if not df_all.empty:
             invs = df_all[df_all['category'].str.contains("Invest", case=False, na=False)]
             if not invs.empty:
-                invs['date'] = pd.to_datetime(invs['date'], errors='coerce')
+                # Já está convertido para datetime e ordenado, mas garantimos:
                 invs = invs.sort_values('date', ascending=False)
                 tot = invs['amount'].sum()
                 st.markdown(f'<div class="kpi-card" style="margin-bottom:20px"><div class="kpi-label">Total Acumulado</div><div class="kpi-value" style="color:#4CAF50">{UIManager.format_money(tot)}</div></div>', unsafe_allow_html=True)
@@ -291,7 +308,13 @@ def main():
         
         metas = db.get_metas(user)
         if not metas.empty and start_date and end_date:
-            atual = db.fetch_all(user, start_date=start_date, end_date=end_date)
+            # [OTIMIZAÇÃO] Filtra df_global
+            if not df_global.empty:
+                mask = (df_global['date'].dt.date >= start_date) & (df_global['date'].dt.date <= end_date)
+                atual = df_global.loc[mask]
+            else:
+                atual = pd.DataFrame(columns=df_global.columns)
+
             gastos = atual[atual['type']=='Despesa'].groupby('category')['amount'].sum()
             cols = st.columns(3) 
             for idx, r in metas.iterrows():
@@ -325,12 +348,16 @@ def main():
         with st.container(border=True):
             st.markdown("### 🗂️ Central de Arquivos")
             b1, b2 = st.columns(2)
-            full = db.fetch_all(user, limit=None)
+            # [OTIMIZAÇÃO] Usa df_global (já contém tudo)
+            full = df_global
             if not full.empty:
                 exc = DocGenerator.to_excel(full)
                 b1.download_button("📥 Baixar Excel", exc.getvalue(), "controle.xlsx")
                 if start_date and end_date:
-                    mes = db.fetch_all(user, start_date=start_date, end_date=end_date)
+                    # [OTIMIZAÇÃO] Filtra df_global
+                    mask = (df_global['date'].dt.date >= start_date) & (df_global['date'].dt.date <= end_date)
+                    mes = df_global.loc[mask]
+                    
                     if not mes.empty:
                         i, e = db.get_totals(user, start_date, end_date)
                         pdf = DocGenerator.to_pdf(user, mes, i, e, i-e, f"Periodo: {start_date} a {end_date}")
@@ -339,10 +366,18 @@ def main():
 
         st.divider()
         opt = st.selectbox("Ordenar:", ["Recentes", "Antigos", "Maior Valor"])
-        v = db.fetch_all(user, start_date=start_date, end_date=end_date) if start_date else db.fetch_all(user, limit=20)
+        
+        # [OTIMIZAÇÃO] Define 'v' baseado no filtro ou limite
+        if start_date and end_date and not df_global.empty:
+            mask = (df_global['date'].dt.date >= start_date) & (df_global['date'].dt.date <= end_date)
+            v = df_global.loc[mask]
+        elif not df_global.empty:
+            v = df_global.head(20) # Pega os 20 primeiros (já ordenados)
+        else:
+            v = pd.DataFrame(columns=df_global.columns)
         
         if not v.empty:
-            v['date'] = pd.to_datetime(v['date'], errors='coerce')
+            # Ordenação dinâmica na interface
             if opt == "Recentes": v = v.sort_values('date', ascending=False)
             elif opt == "Antigos": v = v.sort_values('date', ascending=True)
             else: v = v.sort_values('amount', ascending=False)
@@ -379,7 +414,9 @@ def main():
         st.markdown("#### 🧠 Coach Financeiro")
         if st.button("Analisar minhas finanças", type="primary"):
             with st.spinner("O Coach está pensando..."):
-                df_coach = db.fetch_all(user, limit=50)
+                # [OTIMIZAÇÃO] Pega os 50 primeiros registros do dataframe global
+                df_coach = df_global.head(50) if not df_global.empty else pd.DataFrame()
+                
                 inc_t, _ = db.get_totals(user, start_date, end_date)
                 rep = AIManager.coach_financeiro(df_coach, inc_t, mkt)
                 st.markdown(f'<div style="background:#262730;padding:25px;border-radius:15px;border-left:5px solid #8e44ad;">{rep}</div>', unsafe_allow_html=True)
