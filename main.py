@@ -1,28 +1,32 @@
-# Arquivo: main.py
 import streamlit as st
+import sys
+import os
+
+# Adiciona o diretório raiz ao path do Python
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import time
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import pytz
-import os
 import locale
 
-# Importando módulos da estrutura
 from src.database import RobustDatabase
 from src.ai_engine import AIManager
 from src.ui import UIManager
 from src.utils import get_market_data, DocGenerator
+from src.services.transaction_service import TransactionService
 
-# Tenta forçar Locale PT-BR
+# Configuração de Localização
 try:
     locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
 except:
     try: locale.setlocale(locale.LC_ALL, 'Portuguese_Brazil.1252')
     except: pass
 
-# Configuração da página
+# Configuração da Página
 st.set_page_config(
     page_title="SmartWallet Personal Pro",
     page_icon="💲", 
@@ -35,6 +39,7 @@ CATEGORIAS_BASE = ["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", 
 
 @st.fragment(run_every=10) 
 def header_relogio(mkt):
+    """Componente de cabeçalho com relógio e status de conexão."""
     now = datetime.now(FUSO_BR)
     d_str = now.strftime("%A, %d de %B de %Y").title()
     
@@ -52,16 +57,25 @@ def header_relogio(mkt):
 
 def main():
     UIManager.inject_global_css()
+    
     db = RobustDatabase()
+    try:
+        service = TransactionService()
+    except Exception as e:
+        st.error(f"Erro ao iniciar serviços: {e}")
+        return
+    
     AIManager.configure()
     
+    # Inicialização de estado da sessão
     if 'audio_key' not in st.session_state: st.session_state.audio_key = 0
     if 'history_mkt' not in st.session_state: st.session_state.history_mkt = {}
     if 'logged_in' not in st.session_state: st.session_state.logged_in = False
     if 'user' not in st.session_state: st.session_state.user = None
     if 'manual_form' not in st.session_state: st.session_state.manual_form = {}
+    if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 
-    # --- TELA DE LOGIN ---
+    # Tela de Login
     if not st.session_state.logged_in:
         c1, c2, c3 = st.columns([1, 1.5, 1])
         with c2:
@@ -95,7 +109,7 @@ def main():
                     else: st.error(msg)
         return
 
-    # --- SISTEMA LOGADO ---
+    # Área Logada
     user = st.session_state.user
     user_cats = db.get_categories(user)
     
@@ -129,9 +143,20 @@ def main():
             new_cat = st.text_input("Nova Categoria")
             if st.button("Adicionar"):
                 if db.add_category(user, new_cat): st.success(f"'{new_cat}' OK!"); time.sleep(1); st.rerun()
+            
             del_cat = st.selectbox("Excluir Categoria", [c for c in user_cats if c not in CATEGORIAS_BASE])
+            
+            @st.dialog("Excluir Categoria?")
+            def confirm_del_cat(cat_name):
+                st.write(f"Tem certeza que deseja apagar a categoria **{cat_name}**?")
+                c1, c2 = st.columns(2)
+                if c1.button("Sim, Excluir", type="primary", key="s_cat"):
+                    db.delete_category(user, cat_name)
+                    st.rerun()
+                if c2.button("Cancelar", key="n_cat"): st.rerun()
+
             if st.button("Excluir"):
-                if db.delete_category(user, del_cat): st.success("Excluída!"); time.sleep(1); st.rerun()
+                confirm_del_cat(del_cat)
 
         st.divider()
         if st.button("Sair da Conta"): st.session_state.logged_in = False; st.rerun()
@@ -139,6 +164,7 @@ def main():
     mkt = get_market_data()
     header_relogio(mkt)
     
+    # Ticker de Mercado
     mc1, mc2, mc3, mc4 = st.columns(4)
     assets = [("USD", "Dólar", "$"), ("EUR", "Euro", "€"), ("GBP", "Libra", "£"), ("BTC", "Bitcoin", "₿")]
     for i, (k, n, s) in enumerate(assets):
@@ -152,16 +178,20 @@ def main():
             st.markdown(f"""<div class="market-card {trend_class}">{svg}<div class="label-coin">{n}</div><div class="value-coin">{s} {UIManager.format_money(val).replace('R$ ','')}</div></div>""", unsafe_allow_html=True)
     st.divider()
 
-   
-    df_global = db.fetch_all(user, limit=None)
+    # Carregamento de Dados Globais
+    try:
+        df_global = service.get_statement(user, limit=None)
+    except Exception as e:
+        st.error(f"Erro ao carregar dados: {e}")
+        df_global = pd.DataFrame()
     
-    # Pré-processamento global de datas
     if not df_global.empty:
         df_global['date'] = pd.to_datetime(df_global['date'], errors='coerce')
         df_global = df_global.sort_values('date', ascending=False)
     
     tabs = st.tabs(["🤖 IA Rápida", "✍️ Manual", "📊 Dashboard", "💰 Investimentos", "🎯 Metas", "📑 Extrato", "🧠 Coach"])
 
+    # Aba 1: IA Rápida
     with tabs[0]:
         st.markdown("""<div style="margin-bottom: 20px;"><h2 style="font-weight: 600; color: #fff;">💬 Assistente Financeiro</h2><p style="color: #888; font-size: 14px;">Digite ou grave um áudio.</p></div>""", unsafe_allow_html=True)
         with st.container(border=True):
@@ -176,21 +206,30 @@ def main():
 
             if audio_val:
                 with st.spinner("🎙️ Processando áudio..."):
-                    res = AIManager.process_audio_nlp(audio_val, mkt, user_cats)
+                    res = AIManager.process_audio_nlp(audio_val, mkt, user_cats, history_df=df_global)
                     if "error" not in res:
-                        db.add_transaction(user, datetime.now(FUSO_BR), res['amount'], res['category'], res['description'], res['type'])
-                        st.toast(f"{res['type']} de R$ {res['amount']} registrada!", icon="✅"); st.session_state.audio_key += 1; time.sleep(1.0); st.rerun()
+                        result = service.register_transaction(user, datetime.now(FUSO_BR), res['amount'], res['category'], res['description'], res['type'])
+                        
+                        if result.is_success:
+                            st.toast(f"{res['type']} de R$ {res['amount']} registrada!", icon="✅"); st.session_state.audio_key += 1; time.sleep(1.0); st.rerun()
+                        else:
+                            st.error(result.error)
                     else: st.error(res['error'])
             elif submitted_text and txt:
                 with st.spinner("🤖 Lendo texto..."):
-                    res = AIManager.process_nlp(txt, mkt, user_cats)
+                    res = AIManager.process_nlp(txt, mkt, user_cats, history_df=df_global)
                     if "error" not in res:
-                        db.add_transaction(user, datetime.now(FUSO_BR), res['amount'], res['category'], res['description'], res['type'])
-                        ico = "🚀" if res.get('source') == "Local/Regex" else "✨"
-                        st.toast(f"{res['type']} de R$ {res['amount']} registrada!", icon=ico)
-                        time.sleep(1.5); st.rerun()
+                        result = service.register_transaction(user, datetime.now(FUSO_BR), res['amount'], res['category'], res['description'], res['type'])
+                        
+                        if result.is_success:
+                            ico = "🚀" if res.get('source') == "Local/Regex" else "✨"
+                            st.toast(f"{res['type']} de R$ {res['amount']} registrada!", icon=ico)
+                            time.sleep(1.5); st.rerun()
+                        else:
+                            st.error(result.error)
                     else: st.error(res['error'])
 
+    # Aba 2: Manual
     with tabs[1]:
         c1, c2 = st.columns(2)
         default_val = st.session_state.manual_form.get('amount', 0.01)
@@ -209,21 +248,33 @@ def main():
         l_date = st.date_input("Data do Registro", datetime.now(FUSO_BR), format="DD/MM/YYYY")
 
         if st.button("Salvar Registro"):
-            dt_final = datetime.combine(l_date, datetime.now(FUSO_BR).time())
+            result = service.register_transaction(
+                user_id=user,
+                date_val=datetime.combine(l_date, datetime.now(FUSO_BR).time()),
+                amount=vl,
+                category=ct,
+                description=ds,
+                type_=tp,
+                proof_file=uploaded_file
+            )
             
-            db.add_transaction(user, dt_final, vl, ct, ds, tp, uploaded_file, uploaded_file.name if uploaded_file else None)
-            if is_rec: db.add_recurring(user, ct, vl, ds, tp, dt_final.day)
-            st.toast("Salvo!", icon="💾"); st.session_state.manual_form = {}; time.sleep(1); st.rerun()
+            if result.is_success:
+                if is_rec: db.add_recurring(user, ct, vl, ds, tp, l_date.day)
+                st.toast(result.data, icon="💾") 
+                st.session_state.manual_form = {}
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(result.error)
 
+    # Aba 3: Dashboard
     with tabs[2]:
         if start_date and end_date:
             c_tit, c_eye = st.columns([6, 1])
             c_tit.subheader(f"Visão Geral: {start_date.strftime('%d/%m')} - {end_date.strftime('%d/%m')}")
             priv = c_eye.toggle("👁️", value=False)
             
-            # Cálculo de totais
-            inc, exp = db.get_totals(user, start_date, end_date)
-            bal = inc - exp
+            inc, exp, bal = service.get_balance_view(user, start_date, end_date)
             
             k1, k2, k3 = st.columns(3)
             with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Entrou</div><div class="kpi-value" style="color:#4CAF50">{UIManager.format_money(inc, priv)}</div></div>', unsafe_allow_html=True)
@@ -233,9 +284,7 @@ def main():
                 st.markdown(f'<div class="kpi-card"><div class="kpi-label">Saldo</div><div class="kpi-value" style="color:{cor}">{UIManager.format_money(bal, priv)}</div></div>', unsafe_allow_html=True)
             st.divider()
             
-            # [OTIMIZAÇÃO] Filtra df_global em vez de chamar db.fetch_all
             if not df_global.empty:
-                # Cria máscara de filtro por data
                 mask = (df_global['date'].dt.date >= start_date) & (df_global['date'].dt.date <= end_date)
                 df_dash = df_global.loc[mask]
             else:
@@ -260,36 +309,65 @@ def main():
             else: st.warning("Sem dados.")
         else: st.info("👈 Selecione um período.")
 
+    # Aba 4: Investimentos
     with tabs[3]:
         st.subheader("💰 Carteira de Investimentos")
-        # [OTIMIZAÇÃO] Usa df_global direto
         df_all = df_global
         
         if not df_all.empty:
             invs = df_all[df_all['category'].str.contains("Invest", case=False, na=False)]
             if not invs.empty:
-                # Já está convertido para datetime e ordenado, mas garantimos:
                 invs = invs.sort_values('date', ascending=False)
-                tot = invs['amount'].sum()
+                tot = invs[invs['type']=='Receita']['amount'].sum() - invs[invs['type']=='Despesa']['amount'].sum()
                 st.markdown(f'<div class="kpi-card" style="margin-bottom:20px"><div class="kpi-label">Total Acumulado</div><div class="kpi-value" style="color:#4CAF50">{UIManager.format_money(tot)}</div></div>', unsafe_allow_html=True)
                 st.markdown("---")
+                
+                @st.dialog("Excluir Investimento?")
+                def modal_del_inv(tid):
+                    st.write("Tem certeza que deseja apagar este registro?")
+                    c_a, c_b = st.columns(2)
+                    if c_a.button("Sim, Excluir", key=f"s_inv_{tid}", type="primary"):
+                        service.delete_transaction(tid, user)
+                        st.rerun()
+                    if c_b.button("Não", key=f"n_inv_{tid}"):
+                        st.rerun()
+
                 for _, r in invs.iterrows():
-                    c1,c2,c3,c4,c5 = st.columns([1.5, 1.5, 5, 2, 1])
+                    c1,c2,c3,c4,c5 = st.columns([1.5, 2, 4, 2, 1])
+                    
+                    label_acao = "Transação"
+                    cor_texto = "white"
+                    desc_low = str(r['description']).lower()
+                    
+                    if r['type'] == 'Despesa':
+                        label_acao = "📤 Aporte" # Saiu da conta -> Foi pro investimento
+                        cor_texto = "orange"
+                    else:
+                        if "saldo" in desc_low or "tenho" in desc_low:
+                            label_acao = "💰 Saldo Atual"
+                            cor_texto = "green"
+                        elif "resgate" in desc_low or "retirei" in desc_low or "saque" in desc_low:
+                            label_acao = "📥 Resgate"
+                            cor_texto = "blue"
+                        else:
+                            label_acao = "💰 Saldo/Entrada"
+                            cor_texto = "green"
+
                     data_fmt = r['date'].strftime('%d/%m %H:%M') if pd.notnull(r['date']) else "--/--"
-                    val = f"R$ {r['amount']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    cor = "green"
-                    sig = "+" if r['type'] != 'Despesa' else ""
-                    c1.caption(data_fmt); c2.write("Investiu" if r['type'] == 'Despesa' else "Resgate"); c3.write(r['description']); c4.markdown(f":{cor}[{sig} {val}]")
-                    @st.dialog(f"Apagar Investimento?")
-                    def modal_del_inv(tid):
-                        st.write("Confirmar?"); c_a, c_b = st.columns(2)
-                        if c_a.button("Sim", key=f"s_inv_{tid}"): db.remove_transaction(tid, user); st.rerun()
-                        if c_b.button("Não", key=f"n_inv_{tid}"): st.rerun()
-                    if c5.button("🗑️", key=f"del_inv_{r['id']}"): modal_del_inv(r['id'])
+                    
+                    c1.caption(data_fmt)
+                    c2.markdown(f":{cor_texto}[**{label_acao}**]")
+                    c3.write(r['description'])
+                    c4.write(UIManager.format_money(r['amount']))
+                    
+                    if c5.button("🗑️", key=f"del_inv_{r['id']}"):
+                        modal_del_inv(r['id'])
+                        
                     st.markdown("---")
             else: st.info("Nenhum registro em 'Investimentos'.")
         else: st.info("Sem dados.")
 
+    # Aba 5: Metas
     with tabs[4]:
         c_h, c_b = st.columns([4,1])
         c_h.markdown("#### 🎯 Metas de Gastos")
@@ -302,13 +380,16 @@ def main():
         @st.dialog("Excluir Meta?")
         def delete_meta_dialog(category):
             st.write(f"Excluir meta de **{category}**?"); 
-            if st.button("Sim", type="primary"): db.delete_meta(user, category); st.rerun()
+            c1, c2 = st.columns(2)
+            if c1.button("Sim, Excluir", type="primary", key=f"sim_m_{category}"):
+                db.delete_meta(user, category)
+                st.rerun()
+            if c2.button("Não", key=f"nao_m_{category}"): st.rerun()
 
         if c_b.button("➕ Nova Meta"): modal_meta()
         
         metas = db.get_metas(user)
         if not metas.empty and start_date and end_date:
-            # [OTIMIZAÇÃO] Filtra df_global
             if not df_global.empty:
                 mask = (df_global['date'].dt.date >= start_date) & (df_global['date'].dt.date <= end_date)
                 atual = df_global.loc[mask]
@@ -344,22 +425,21 @@ def main():
                     with c_chart: st.plotly_chart(fig, use_container_width=True)
         else: st.info("Defina metas e selecione um período.")
 
+    # Aba 6: Extrato
     with tabs[5]:
         with st.container(border=True):
             st.markdown("### 🗂️ Central de Arquivos")
             b1, b2 = st.columns(2)
-            # [OTIMIZAÇÃO] Usa df_global (já contém tudo)
             full = df_global
             if not full.empty:
                 exc = DocGenerator.to_excel(full)
                 b1.download_button("📥 Baixar Excel", exc.getvalue(), "controle.xlsx")
                 if start_date and end_date:
-                    # [OTIMIZAÇÃO] Filtra df_global
                     mask = (df_global['date'].dt.date >= start_date) & (df_global['date'].dt.date <= end_date)
                     mes = df_global.loc[mask]
                     
                     if not mes.empty:
-                        i, e = db.get_totals(user, start_date, end_date)
+                        i, e, _ = service.get_balance_view(user, start_date, end_date)
                         pdf = DocGenerator.to_pdf(user, mes, i, e, i-e, f"Periodo: {start_date} a {end_date}")
                         if pdf: b2.download_button("📄 Baixar PDF", pdf, "relatorio.pdf")
                         else: b2.warning("⚠️ PDF indisponível (instale 'fpdf')")
@@ -367,20 +447,27 @@ def main():
         st.divider()
         opt = st.selectbox("Ordenar:", ["Recentes", "Antigos", "Maior Valor"])
         
-        # [OTIMIZAÇÃO] Define 'v' baseado no filtro ou limite
         if start_date and end_date and not df_global.empty:
             mask = (df_global['date'].dt.date >= start_date) & (df_global['date'].dt.date <= end_date)
             v = df_global.loc[mask]
         elif not df_global.empty:
-            v = df_global.head(20) # Pega os 20 primeiros (já ordenados)
+            v = df_global.head(20)
         else:
             v = pd.DataFrame(columns=df_global.columns)
         
         if not v.empty:
-            # Ordenação dinâmica na interface
             if opt == "Recentes": v = v.sort_values('date', ascending=False)
             elif opt == "Antigos": v = v.sort_values('date', ascending=True)
             else: v = v.sort_values('amount', ascending=False)
+
+            @st.dialog("Excluir Transação?")
+            def confirm_del_row(tid):
+                st.write("Tem certeza que deseja apagar este registro permanentemente?")
+                c1, c2 = st.columns(2)
+                if c1.button("Sim, Apagar", type="primary", key=f"s_row_{tid}"):
+                    service.delete_transaction(tid, user)
+                    st.rerun()
+                if c2.button("Cancelar", key=f"n_row_{tid}"): st.rerun()
 
             st.markdown("---")
             for _, r in v.iterrows():
@@ -405,21 +492,63 @@ def main():
                     if st.button("🔄", key=f"clone_{r['id']}"):
                         st.session_state.manual_form = {'amount': r['amount'], 'desc': r['description'], 'cat': r['category']}
                         st.toast("Copiado!", icon="📋")
-                    if st.button("🗑️", key=f"del_{r['id']}"): db.remove_transaction(r['id'], user); st.rerun()
+                    if st.button("🗑️", key=f"del_{r['id']}"): 
+                        confirm_del_row(r['id'])
                 st.markdown("---")
-            if st.button("⚠️ Resetar Conta"): db.nuke_data(user); st.rerun()
+            
+            @st.dialog("⚠️ PERIGO: APAGAR TUDO?")
+            def confirm_nuke():
+                st.error("Isso vai apagar TODAS as suas transações, metas e histórico.")
+                st.write("Tem certeza absoluta? Essa ação não pode ser desfeita.")
+                c1, c2 = st.columns(2)
+                if c1.button("SIM, APAGAR TUDO", type="primary", key="nuke_yes"):
+                    db.nuke_data(user)
+                    st.rerun()
+                if c2.button("CANCELAR", key="nuke_no"): st.rerun()
+
+            if st.button("⚠️ Resetar Conta"): 
+                confirm_nuke()
         else: st.info("Vazio.")
 
+    # Aba 7: Coach
     with tabs[6]:
-        st.markdown("#### 🧠 Coach Financeiro")
+        c_head, c_trash = st.columns([5, 1])
+        c_head.markdown("#### 🧠 Coach Financeiro")
+        
+        @st.dialog("Limpar Chat?")
+        def confirm_clear_chat():
+            st.write("Deseja apagar todo o histórico da conversa?")
+            c1, c2 = st.columns(2)
+            if c1.button("Sim", type="primary", key="s_chat"):
+                st.session_state.chat_history = []
+                st.rerun()
+            if c2.button("Não", key="n_chat"): st.rerun()
+
+        if c_trash.button("🗑️ Limpar", help="Apagar histórico do chat", key="btn_clear_chat"):
+            confirm_clear_chat()
+
         if st.button("Analisar minhas finanças", type="primary"):
-            with st.spinner("O Coach está pensando..."):
-                # [OTIMIZAÇÃO] Pega os 50 primeiros registros do dataframe global
+            with st.spinner("O Coach está analisando seu perfil..."):
                 df_coach = df_global.head(50) if not df_global.empty else pd.DataFrame()
+                inc_t, _, _ = service.get_balance_view(user, start_date, end_date)
                 
-                inc_t, _ = db.get_totals(user, start_date, end_date)
                 rep = AIManager.coach_financeiro(df_coach, inc_t, mkt)
+                
                 st.markdown(f'<div style="background:#262730;padding:25px;border-radius:15px;border-left:5px solid #8e44ad;">{rep}</div>', unsafe_allow_html=True)
+        
+        st.divider()
+        st.caption("Ou converse com seu assistente financeiro abaixo:")
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg["role"]): st.markdown(msg["content"])
+            
+        if p := st.chat_input("Pergunte algo..."):
+            st.session_state.chat_history.append({"role":"user", "content":p})
+            with st.chat_message("user"): st.markdown(p)
+            with st.chat_message("assistant"):
+                with st.spinner("Consultando..."):
+                    res = AIManager.chat_with_docs(p, df=df_global)
+                    st.markdown(res)
+            st.session_state.chat_history.append({"role":"assistant", "content":res})
 
 if __name__ == "__main__":
     main()

@@ -1,21 +1,15 @@
-# Arquivo: src/ui.py
 import streamlit as st
 from typing import Union
 
 class UIManager:
     """
     Gerenciador de Interface de Usuário (UI).
-    Responsável por injetar CSS, criar componentes visuais e formatar dados.
-    
-    Pattern: Static Utility Class (não requer instanciação).
+    Responsável por injetar CSS customizado, criar componentes visuais e formatar dados.
     """
     
     @staticmethod
     def inject_global_css() -> None:
-        """
-        Injeta o CSS global da aplicação para sobrescrever estilos padrão do Streamlit.
-        Define fontes, cores de cards e animações.
-        """
+        """Injeta o CSS global da aplicação para customização visual."""
         try:
             st.markdown("""
                 <style>
@@ -25,7 +19,7 @@ class UIManager:
                 html, body, [class*="css"] { font-family: 'Poppins', sans-serif !important; }
                 .main { background-color: #0E1117; }
                 
-                /* Login Container Styling */
+                /* Estilo do Container de Login */
                 .login-container {
                     background: linear-gradient(145deg, #1E1E1E, #252525);
                     padding: 45px;
@@ -36,7 +30,7 @@ class UIManager:
                     margin-top: 60px;
                 }
                 
-                /* Animações de Mercado (Trending) */
+                /* Animações de Tendência de Mercado */
                 @keyframes flashGreen {
                     0% { border-color: #4CAF50; box-shadow: 0 0 15px rgba(76, 175, 80, 0.5); }
                     100% { border-color: #2C2F38; box-shadow: none; }
@@ -46,7 +40,7 @@ class UIManager:
                     100% { border-color: #2C2F38; box-shadow: none; }
                 }
 
-                /* Cards de Cotação */
+                /* Cards de Cotação (Ticker) */
                 .market-card { 
                     background-color: #121318; 
                     border: 1px solid #2C2F38; 
@@ -89,17 +83,14 @@ class UIManager:
                 </style>
             """, unsafe_allow_html=True)
         except Exception:
-            # Falha silenciosa no CSS não deve quebrar a app
             pass
 
     @staticmethod
     def get_svg_chart(is_up: bool = True) -> str:
         """
         Gera o código SVG para o gráfico de fundo dos cards de cotação.
-        
         Args:
-            is_up (bool): Se True, gera gráfico verde (alta). False gera vermelho (baixa).
-            
+            is_up (bool): Define a cor (Verde para alta, Vermelho para baixa).
         Returns:
             str: String HTML contendo o SVG.
         """
@@ -124,11 +115,9 @@ class UIManager:
     def format_money(value: Union[float, int], hidden: bool = False) -> str:
         """
         Formata valores numéricos para o padrão monetário BRL (R$ 1.000,00).
-        
         Args:
             value (float): Valor numérico.
-            hidden (bool): Se True, retorna 'R$ ****' (modo privacidade).
-            
+            hidden (bool): Se True, oculta o valor ('R$ ****').
         Returns:
             str: String formatada.
         """
@@ -136,24 +125,21 @@ class UIManager:
             return "R$ ****"
             
         try:
-            # Formatação segura com replace para padrão brasileiro
             return f"R$ {float(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         except (ValueError, TypeError):
             return "R$ 0,00"
     
-    # Adicionando método faltante para compatibilidade com sua versão do main.py
     @staticmethod
     def fmt_money(value: Union[float, int]) -> str:
-        """Alias curto para format_money (usado no main.py atualizado)."""
+        """Alias para format_money."""
         return UIManager.format_money(value, hidden=False)
 
     @staticmethod
     def render_market_ticker(mkt: dict):
-        """Renderiza o ticker de cotações (compatibilidade com main.py)."""
+        """Renderiza o ticker de cotações com base nos dados fornecidos."""
         mc1, mc2, mc3, mc4 = st.columns(4)
         assets = [("USD", "Dólar", "$"), ("EUR", "Euro", "€"), ("GBP", "Libra", "£"), ("BTC", "Bitcoin", "₿")]
         
-        # Recupera histórico da sessão se disponível
         history = st.session_state.get('history_mkt', {})
         
         for i, (k, n, s) in enumerate(assets):
@@ -161,7 +147,6 @@ class UIManager:
             prev_val = history.get(k, val)
             is_up = val >= prev_val 
             
-            # Atualiza histórico
             if 'history_mkt' in st.session_state:
                 st.session_state.history_mkt[k] = val
                 

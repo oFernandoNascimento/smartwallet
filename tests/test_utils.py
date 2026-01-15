@@ -1,28 +1,30 @@
-# Arquivo: tests/test_utils.py
 import unittest
 import sys
 import os
 
-# Adiciona a pasta raiz ao caminho do Python para conseguir importar 'src'
+# Configuração de caminho para permitir a importação do módulo src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.utils import DomainValidators
 
 class TestValidators(unittest.TestCase):
+    """
+    Suite de testes unitários para a classe DomainValidators.
+    Garante a integridade das regras de negócio para dados financeiros.
+    """
     
     def test_valor_positivo_sucesso(self):
-        """Testa se um valor positivo (100) é aceito normalmente."""
+        """Verifica se valores positivos válidos são processados e convertidos corretamente."""
         resultado = DomainValidators.validate_amount(100)
         self.assertEqual(resultado, 100.0)
 
     def test_rejeita_valor_negativo(self):
-        """Testa se o sistema bloqueia valores negativos (-50)."""
-        # Esperamos que isso gere um ValueError
+        """Assegura que valores negativos levantem exceção (ValueError)."""
         with self.assertRaises(ValueError):
             DomainValidators.validate_amount(-50)
 
     def test_rejeita_zero(self):
-        """Testa se o sistema bloqueia valor zero."""
+        """Assegura que valor zero levante exceção, exigindo valores positivos."""
         with self.assertRaises(ValueError):
             DomainValidators.validate_amount(0)
 

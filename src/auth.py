@@ -1,4 +1,3 @@
-# Arquivo: src/auth.py
 import hashlib
 import re
 import logging
@@ -21,22 +20,21 @@ class SecurityManager:
     a força das senhas conforme as diretrizes de segurança da aplicação.
     """
     
-    # Manteve-se a constante para garantir retrocompatibilidade (Regra: Nunca remover código)
-    # Mas agora ela atua apenas como um fallback de emergência.
+    # Fallback de segurança para o Salt caso as variáveis de ambiente falhem
     DEFAULT_UNSAFE_SALT: str = "SmartWallet_2026_SecureSalt_#99"
 
     @staticmethod
     def _get_salt() -> str:
         """
-        Recupera o SALT de criptografia de uma fonte segura (Environment/Secrets).
+        Recupera o SALT de criptografia de uma fonte segura (Secrets ou Variáveis de Ambiente).
         
         Returns:
             str: O token de sal para o hash.
         """
         try:
-            # Tenta recuperar de st.secrets (Produção) ou Variáveis de Ambiente
             salt: Optional[str] = None
             
+            # Prioridade: Streamlit Secrets > Variáveis de Ambiente
             if "SECURITY_SALT" in st.secrets:
                 salt = st.secrets["SECURITY_SALT"]
             elif "SECURITY_SALT" in os.environ:
@@ -45,13 +43,11 @@ class SecurityManager:
             if salt:
                 return salt
             
-            # Alerta de Segurança Crítico se cair no fallback
-            logger.warning("SECURITY ALERT: Utilizando SALT hardcoded padrão. Configure 'SECURITY_SALT' nos secrets.")
+            logger.warning("SECURITY ALERT: Utilizando SALT padrão. Configure 'SECURITY_SALT' nos secrets.")
             return SecurityManager.DEFAULT_UNSAFE_SALT
             
         except Exception as e:
             logger.error(f"Falha crítica ao recuperar SALT: {e}")
-            # Em caso de erro total, usa o fallback para não derrubar a aplicação
             return SecurityManager.DEFAULT_UNSAFE_SALT
 
     @staticmethod
@@ -70,19 +66,17 @@ class SecurityManager:
                 raise ValueError("A senha não pode ser vazia para hashing.")
 
             salt: str = SecurityManager._get_salt()
-            # Combinação do Salt + Senha para evitar ataques de Rainbow Table
+            # Combinação do Salt + Senha para proteção contra Rainbow Tables
             salted_pwd: str = pwd + salt
             
             password_hash: str = hashlib.sha256(salted_pwd.encode('utf-8')).hexdigest()
             
-            # Log discreto para debug (sem expor a senha)
             logger.debug(f"Hash gerado com sucesso para senha de comprimento {len(pwd)}")
             
             return password_hash
             
         except Exception as e:
             logger.critical(f"Erro durante o processo de hashing: {e}")
-            # Relança a exceção para ser tratada na camada superior (Fail Fast)
             raise e
     
     @staticmethod
@@ -106,7 +100,6 @@ class SecurityManager:
                 logger.error("Tentativa de validar senha que não é string.")
                 return False
 
-            # Verificações incrementais para clareza e robustez
             has_min_len: bool = len(pwd) >= 8
             has_letter: bool = bool(re.search(r"[A-Za-z]", pwd))
             has_number: bool = bool(re.search(r"[0-9]", pwd))
@@ -120,5 +113,4 @@ class SecurityManager:
 
         except Exception as e:
             logger.error(f"Erro inesperado na validação de senha: {e}")
-            # Por segurança, falha fechada (retorna False) em caso de erro
             return False
