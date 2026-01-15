@@ -39,11 +39,9 @@ class AIManager:
     def _clean_json(text: str) -> Optional[Dict]:
         """Extrai e converte o JSON da resposta textual da IA."""
         if not text: return None
-        # Remove blocos de código markdown se houver
         text = re.sub(r'```json', '', text, flags=re.IGNORECASE)
         text = re.sub(r'```', '', text).strip()
         
-        # Tenta encontrar o padrão JSON
         match = re.search(r'\{.*\}', text, re.DOTALL)
         if match:
             try: return json.loads(match.group(0))
@@ -55,12 +53,12 @@ class AIManager:
     def _sanitize_output(text: str) -> str:
         """
         Sanitiza a saída de texto para o Streamlit.
-        Remove formatação Markdown de código (backticks) e escapa símbolos LaTeX ($)
+        Remove formatação Markdown de código e escapa símbolos LaTeX
         para garantir renderização de texto plano limpo.
         """
         if not text: return ""
-        text = text.replace("`", "")  # Remove backticks
-        text = text.replace("$", "\$") # Escapa cifrão para evitar LaTeX
+        text = text.replace("`", "")
+        text = text.replace("$", "\$")
         return text
 
     @staticmethod
@@ -75,10 +73,13 @@ class AIManager:
 
     @staticmethod
     def _try_local_rules(text: str) -> Optional[Dict]:
-        """Tenta classificar a transação usando Regex local antes de chamar a IA."""
+        """
+        Tenta classificar a transação usando Regex local antes de chamar a IA.
+        Otimiza performance e custo para transações simples.
+        """
         try:
             text_lower = text.lower()
-            # Se houver termos complexos de investimento, delega para a IA
+            # Delega para IA se houver termos complexos ou moedas estrangeiras
             termos_complexos = r'(dolar|dólar|usd|euro|eur|libra|gbp|bitcoin|btc|cdb|cdi|selic|fii|dividendos|rendimento|investi|aplic|guard|resgat|tesouro)'
             if re.search(termos_complexos, text_lower): return None 
 
@@ -96,10 +97,12 @@ class AIManager:
             elif re.search(r'(gastei|paguei|compra|saída|uber|ifood)', text_lower): tipo = "Despesa"
             
             cat = "Outros"
+            # Regras de categorização por palavras-chave
             if "uber" in text_lower or "combustível" in text_lower or "ônibus" in text_lower: cat = "Transporte"
-            elif "ifood" in text_lower or "restaurante" in text_lower or "mercado" in text_lower: cat = "Alimentação"
+            elif "ifood" in text_lower or "restaurante" in text_lower or "mercado" in text_lower or "padaria" in text_lower: cat = "Alimentação"
             elif "aluguel" in text_lower or "luz" in text_lower or "internet" in text_lower: cat = "Moradia"
             elif "curso" in text_lower or "faculdade" in text_lower: cat = "Educação"
+            elif "farmácia" in text_lower or "médico" in text_lower or "remédio" in text_lower or "hospital" in text_lower: cat = "Saúde"
             
             if cat == "Outros" and tipo == "Despesa": return None
 
@@ -132,7 +135,7 @@ class AIManager:
         """Núcleo de processamento da IA para classificação de transações."""
         knowledge_text = KnowledgeBaseLoader.load_knowledge(AIManager.KNOWLEDGE_SOURCE)
         
-        # Tenta regras locais para texto simples
+        # Tenta regras locais para texto simples (Estratégia Híbrida)
         if not is_audio and isinstance(input_data, str) and not knowledge_text:
             local_result = AIManager._try_local_rules(input_data)
             if local_result: return local_result
@@ -190,23 +193,19 @@ class AIManager:
             
             resumo_financeiro = "Sem dados."
             if df is not None and not df.empty:
-                # 1. Identificação de Salário (Recorrência)
                 mask_salario = (df['category'].str.contains('Salário', case=False, na=False)) & (df['type'] == 'Receita')
                 df_salario = df[mask_salario].sort_values('date', ascending=False)
                 salario_estimado = df_salario.iloc[0]['amount'] if not df_salario.empty else 0.0
 
-                # 2. Identificação de Patrimônio (Investimentos)
                 keywords = ['cdi', 'cdb', 'lci', 'lca', 'tesouro', 'poupanca', 'nubank', 'caixinha', 'invest', 'btc', 'cripto', 'ouro', 'dolar', 'fii', 'ações']
                 pattern = '|'.join(keywords)
                 mask_invest = ((df['category'].str.contains('Invest', case=False, na=False)) | (df['description'].str.contains(pattern, case=False, na=False)))
                 df_invest = df[mask_invest]
                 
-                # Cálculo simples de patrimônio (soma de fluxos de investimento)
                 total_investido_aportes = df_invest[df_invest['type'] == 'Despesa']['amount'].sum()
                 total_investido_saldos = df_invest[df_invest['type'] == 'Receita']['amount'].sum()
                 total_patrimonio = total_investido_aportes + total_investido_saldos
                 
-                # 3. Total de Despesas
                 total_gastos = df[df['type'] == 'Despesa']['amount'].sum()
                 
                 resumo_financeiro = f"""
