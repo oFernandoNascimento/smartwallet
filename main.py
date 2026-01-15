@@ -295,12 +295,28 @@ def main():
                 if not df_exp.empty:
                     c_ch, c_li = st.columns([1.5, 1])
                     with c_ch:
+                        # --- CORREÇÃO DO GRÁFICO (PIZZA) ---
                         grp = df_exp.groupby('category')['amount'].sum().reset_index()
                         grp['fmt'] = grp['amount'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        fig = px.pie(grp, values='amount', names='category', hole=0.6, color_discrete_sequence=px.colors.qualitative.Pastel, custom_data=['fmt'])
-                        fig.update_traces(hovertemplate='<b>%{label}</b><br>Gasto: %{customdata[0]}<br>(%{percent})<extra></extra>')
-                        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="white", height=350, margin=dict(t=20, b=20))
+                        
+                        fig = px.pie(grp, values='amount', names='category', hole=0.6, 
+                                     color_discrete_sequence=px.colors.qualitative.Pastel, custom_data=['fmt'])
+                        
+                        # Labels e Hover ajustados
+                        fig.update_traces(textposition='outside', hovertemplate='<b>%{label}</b><br>%{customdata[0]}<br>(%{percent})')
+                        
+                        # Layout ajustado: Legenda embaixo para evitar "torto"
+                        fig.update_layout(
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            font_color="white",
+                            height=400,
+                            margin=dict(t=30, b=80, l=20, r=20),
+                            showlegend=True,
+                            legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5)
+                        )
                         st.plotly_chart(fig, use_container_width=True)
+                        # -----------------------------------
+                    
                     with c_li:
                         st.markdown("##### 🏆 Top Gastos")
                         top = df_exp.groupby('category')['amount'].sum().sort_values(ascending=False).head(5)
@@ -404,11 +420,12 @@ def main():
                 pct = s / l if l > 0 else 0
                 bar_color = "#4CAF50" if pct < 0.75 else "#FFC107" if pct < 1.0 else "#FF5252"
 
+                # --- CORREÇÃO DO GRÁFICO (GAUGE) ---
                 fig = go.Figure(go.Indicator(
                     mode = "gauge+number", value = s,
                     domain = {'x': [0, 1], 'y': [0, 1]},
                     number = {'prefix': "R$ ", 'font': {'family': "Poppins", 'color': "white", 'size': 26}},
-                    title = {'text': f"<span style='font-size:1.8em; color: #4CAF50'><b>{c}</b></span><br><span style='font-size:0.9em;color:#888'>Meta: R$ {l:,.0f}</span>", 'align': "center"},
+                    title = {'text': f"<span style='font-size:1.4em; color: #4CAF50'><b>{c}</b></span><br><span style='font-size:0.9em;color:#888'>Meta: R$ {l:,.0f}</span>", 'align': "center"},
                     gauge = {
                         'axis': {'range': [None, max(l, s*1.1)], 'visible': False},
                         'bar': {'color': bar_color, 'thickness': 0.25}, 
@@ -416,7 +433,9 @@ def main():
                         'threshold': {'line': {'color': "white", 'width': 2}, 'thickness': 0.25, 'value': l}
                     }
                 ))
-                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font={'color': "white", 'family': "Poppins"}, height=250, margin=dict(l=25, r=25, t=50, b=20))
+                # Layout compacto e margens ajustadas para centralizar
+                fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font={'color': "white", 'family': "Poppins"}, height=250, margin=dict(l=30, r=30, t=50, b=20))
+                # -----------------------------------
                 
                 with cols[idx % 3]:
                     c_chart, c_trash = st.columns([0.85, 0.15])
