@@ -75,7 +75,7 @@ class AIManager:
     def _try_local_rules(text: str) -> Optional[Dict]:
         """
         Tenta classificar a transação usando Regex local antes de chamar a IA.
-        Otimiza performance e custo para transações simples.
+        Garante categorização determinística para termos comuns.
         """
         try:
             text_lower = text.lower()
@@ -97,12 +97,12 @@ class AIManager:
             elif re.search(r'(gastei|paguei|compra|saída|uber|ifood)', text_lower): tipo = "Despesa"
             
             cat = "Outros"
-            # Regras de categorização por palavras-chave
+            # Regras de categorização por palavras-chave (Prioridade Alta)
             if "uber" in text_lower or "combustível" in text_lower or "ônibus" in text_lower: cat = "Transporte"
             elif "ifood" in text_lower or "restaurante" in text_lower or "mercado" in text_lower or "padaria" in text_lower: cat = "Alimentação"
             elif "aluguel" in text_lower or "luz" in text_lower or "internet" in text_lower: cat = "Moradia"
             elif "curso" in text_lower or "faculdade" in text_lower: cat = "Educação"
-            elif "farmácia" in text_lower or "médico" in text_lower or "remédio" in text_lower or "hospital" in text_lower: cat = "Saúde"
+            elif "farmácia" in text_lower or "médico" in text_lower or "remédio" in text_lower or "hospital" in text_lower or "dentista" in text_lower: cat = "Saúde"
             
             if cat == "Outros" and tipo == "Despesa": return None
 
@@ -135,8 +135,8 @@ class AIManager:
         """Núcleo de processamento da IA para classificação de transações."""
         knowledge_text = KnowledgeBaseLoader.load_knowledge(AIManager.KNOWLEDGE_SOURCE)
         
-        # Tenta regras locais para texto simples (Estratégia Híbrida)
-        if not is_audio and isinstance(input_data, str) and not knowledge_text:
+        # Tenta regras locais para texto simples (Prioridade sobre a IA)
+        if not is_audio and isinstance(input_data, str):
             local_result = AIManager._try_local_rules(input_data)
             if local_result: return local_result
 
