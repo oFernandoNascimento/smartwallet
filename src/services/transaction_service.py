@@ -1,5 +1,6 @@
 import logging
 import pandas as pd
+import streamlit as st # Importado para o Cache
 from typing import Tuple, Any, Optional
 
 from src.utils import DomainValidators
@@ -40,6 +41,7 @@ class TransactionService:
             )
 
             if success:
+                st.cache_data.clear() # <--- LIMPA O CACHE PARA ATUALIZAR A TELA
                 return Result.success("Transação registrada com sucesso.")
             return Result.failure("Erro de banco de dados ao salvar.")
 
@@ -50,8 +52,12 @@ class TransactionService:
             logger.critical(f"Erro serviço: {e}")
             return Result.failure("Erro interno no sistema.")
 
-    def get_balance_view(self, uid: str, start=None, end=None) -> Tuple[float, float, float]:
-        data = self.repository.get_financial_summary(uid, start, end)
+    # --- FUNÇÕES COM CACHE (PERFORMANCE) ---
+    # O '_self' com underline diz pro Streamlit não tentar hashear a classe inteira
+    
+    @st.cache_data(show_spinner=False, ttl=300)
+    def get_balance_view(_self, uid: str, start=None, end=None) -> Tuple[float, float, float]:
+        data = _self.repository.get_financial_summary(uid, start, end)
         receita = 0.0
         despesa = 0.0
         for tipo, valor in data:
@@ -61,8 +67,12 @@ class TransactionService:
                 despesa += valor
         return receita, despesa, (receita - despesa)
 
-    def get_statement(self, uid: str, limit: Optional[int] = None) -> pd.DataFrame:
-        return self.repository.fetch_all_by_user(uid, limit)
+    @st.cache_data(show_spinner=False, ttl=300)
+    def get_statement(_self, uid: str, limit: Optional[int] = None) -> pd.DataFrame:
+        return _self.repository.fetch_all_by_user(uid, limit)
 
     def delete_transaction(self, tid: int, uid: str) -> bool:
-        return self.repository.delete(tid, uid)
+        success = self.repository.delete(tid, uid)
+        if success:
+            st.cache_data.clear() # <--- LIMPA O CACHE SE DELETAR
+        return success

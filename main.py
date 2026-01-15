@@ -37,6 +37,7 @@ st.set_page_config(
 FUSO_BR = pytz.timezone('America/Sao_Paulo')
 CATEGORIAS_BASE = ["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", "Salário", "Investimentos", "Educação", "Viagem", "Compras", "Assinaturas", "Presentes", "Outros"]
 
+# --- LÓGICA DE TEMAS ---
 THEMES = {
     "🟢 Verde": "#4CAF50",
     "🔵 Azul": "#2962FF",
@@ -48,7 +49,6 @@ THEMES = {
 }
 
 def get_contrast_color(hex_color):
-    """Calcula se o texto deve ser preto ou branco baseado no brilho da cor de fundo."""
     hex_color = hex_color.lstrip('#')
     r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
     luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
@@ -56,10 +56,8 @@ def get_contrast_color(hex_color):
 
 @st.fragment(run_every=10) 
 def header_relogio(mkt, theme_color):
-    """Cabeçalho com relógio e status."""
     now = datetime.now(FUSO_BR)
     d_str = now.strftime("%A, %d de %B de %Y").title()
-    
     t_map = {
         "Monday":"Segunda","Tuesday":"Terça","Wednesday":"Quarta","Thursday":"Quinta","Friday":"Sexta","Saturday":"Sábado","Sunday":"Domingo",
         "January":"Janeiro","February":"Fevereiro","March":"Março","April":"Abril","May":"Maio","June":"Junho","July":"Julho","August":"Agosto","September":"Setembro","October":"Outubro","November":"Novembro","December":"Dezembro"
@@ -68,7 +66,7 @@ def header_relogio(mkt, theme_color):
         for en, pt in t_map.items(): d_str = d_str.replace(en, pt)
     
     c1, c2 = st.columns([3, 1])
-    c1.markdown(f"<h3 style='color:{theme_color}; margin:0'>{d_str} | {now.strftime('%H:%M:%S')}</h3>", unsafe_allow_html=True)
+    c1.markdown(f"### <span style='color:{theme_color}'>{d_str}</span> | {now.strftime('%H:%M:%S')}", unsafe_allow_html=True)
     st_ico = "🟢" if "online" in mkt.get('status', 'offline') else "🔴"
     c2.caption(f"{st_ico} Conexão: {mkt.get('status', 'OFFLINE').upper()}")
 
@@ -82,7 +80,6 @@ def main():
     
     AIManager.configure()
     
-    # Session State
     if 'audio_key' not in st.session_state: st.session_state.audio_key = 0
     if 'history_mkt' not in st.session_state: st.session_state.history_mkt = {}
     if 'logged_in' not in st.session_state: st.session_state.logged_in = False
@@ -92,11 +89,9 @@ def main():
     
     if 'theme_choice' not in st.session_state: st.session_state.theme_choice = "🟢 Verde"
 
-    # --- TELA LOGIN ---
+    # --- LOGIN ---
     if not st.session_state.logged_in:
-        # Injeta CSS padrão para login
         UIManager.inject_global_css("#4CAF50", "#FFFFFF")
-        
         c1, c2, c3 = st.columns([1, 1.5, 1])
         with c2:
             with st.container(border=True):
@@ -106,10 +101,8 @@ def main():
                 if logo_path:
                     cl, cm, cr = st.columns([1, 1, 1])
                     with cm: st.image(logo_path, use_container_width=True)
-                
                 st.markdown('<h2 style="text-align: center; color: #4CAF50;">SmartWallet Personal</h2>', unsafe_allow_html=True)
                 st.markdown('<p style="text-align: center; color: #888;">Gestão Financeira Inteligente</p>', unsafe_allow_html=True)
-                
                 with st.form("login"):
                     u = st.text_input("Usuário")
                     p = st.text_input("Senha", type="password")
@@ -128,7 +121,7 @@ def main():
                     else: st.error(msg)
         return
 
-    # --- ÁREA LOGADA ---
+    # --- APP ---
     user = st.session_state.user
     user_cats = db.get_categories(user)
     
@@ -138,30 +131,19 @@ def main():
             if os.path.exists(file): logo_path = file; break
         if logo_path: st.logo(logo_path, icon_image=logo_path)
         else: st.title("💲 SmartWallet")
-            
         st.info(f"Usuário: **{user}**")
         st.divider()
-        
-        # --- SELETOR DE TEMAS ---
         st.markdown("### 🎨 Aparência")
-        selected_theme_name = st.selectbox(
-            "Escolha um Tema", 
-            list(THEMES.keys()), 
-            index=list(THEMES.keys()).index(st.session_state.theme_choice)
-        )
+        selected_theme_name = st.selectbox("Escolha um Tema", list(THEMES.keys()), index=list(THEMES.keys()).index(st.session_state.theme_choice))
         if selected_theme_name != st.session_state.theme_choice:
             st.session_state.theme_choice = selected_theme_name
             st.rerun()
-        
         primary_color = THEMES[st.session_state.theme_choice]
         text_contrast = get_contrast_color(primary_color)
-        
         st.divider()
-        
         st.markdown("### 📅 Filtro")
         filter_mode = st.radio("Modo", ["Mês Atual", "Personalizado"], horizontal=True, label_visibility="collapsed")
         start_date, end_date = None, None
-        
         if filter_mode == "Mês Atual":
             today = datetime.now(FUSO_BR).date()
             start_date = today.replace(day=1)
@@ -172,7 +154,6 @@ def main():
             d_range = st.date_input("Intervalo", [], format="DD/MM/YYYY")
             if len(d_range) == 2: start_date, end_date = d_range
             else: st.warning("Defina início e fim.")
-
         st.divider()
         with st.expander("⚙️ Categorias"):
             new_cat = st.text_input("Nova Categoria")
@@ -180,17 +161,14 @@ def main():
                 if db.add_category(user, new_cat): st.success("OK!"); time.sleep(0.5); st.rerun()
             del_cat = st.selectbox("Remover", [c for c in user_cats if c not in CATEGORIAS_BASE])
             if st.button("Excluir"): db.delete_category(user, del_cat); st.rerun()
-
         st.divider()
         if st.button("Logout"): st.session_state.logged_in = False; st.rerun()
 
-    # --- INJEÇÃO DO TEMA ---
     UIManager.inject_global_css(primary_color, text_contrast)
 
     mkt = get_market_data()
     header_relogio(mkt, primary_color)
     
-    # Ticker
     mc1, mc2, mc3, mc4 = st.columns(4)
     assets = [("USD", "Dólar", "$"), ("EUR", "Euro", "€"), ("GBP", "Libra", "£"), ("BTC", "Bitcoin", "₿")]
     for i, (k, n, s) in enumerate(assets):
@@ -215,7 +193,6 @@ def main():
     
     tabs = st.tabs(["🤖 IA Rápida", "✍️ Manual", "📊 Dashboard", "💰 Investimentos", "🎯 Metas", "📑 Extrato", "🧠 Coach"])
 
-    # 1. IA
     with tabs[0]:
         st.markdown(f"""<div style="margin-bottom: 20px;"><h2 style="font-weight: 600; color: {primary_color};">Assistente Financeiro</h2><p style="color: #888;">Registro por voz ou texto com Inteligência Artificial.</p></div>""", unsafe_allow_html=True)
         with st.container(border=True):
@@ -246,23 +223,19 @@ def main():
                         else: st.error(result.error)
                     else: st.error(res['error'])
 
-    # 2. Manual
     with tabs[1]:
         c1, c2 = st.columns(2)
         default_val = st.session_state.manual_form.get('amount', 0.0)
         default_desc = st.session_state.manual_form.get('desc', "")
-        
         with c1:
             tp = st.radio("Tipo", ["Despesa", "Receita"], horizontal=True)
             vl = st.number_input("Valor", min_value=0.01, value=max(0.01, float(default_val)))
         with c2:
             ct = st.selectbox("Categoria", user_cats)
             ds = st.text_input("Descrição", value=default_desc)
-        
         uploaded_file = st.file_uploader("Comprovante", type=['png', 'jpg', 'jpeg', 'pdf'])
         is_rec = st.checkbox("Recorrência Mensal")
         l_date = st.date_input("Data", datetime.now(FUSO_BR), format="DD/MM/YYYY")
-
         if st.button("Confirmar Lançamento"):
             result = service.register_transaction(user, datetime.combine(l_date, datetime.now(FUSO_BR).time()), vl, ct, ds, tp, uploaded_file)
             if result.is_success:
@@ -270,15 +243,12 @@ def main():
                 st.toast("Sucesso!", icon="💾"); st.session_state.manual_form = {}; time.sleep(1); st.rerun()
             else: st.error(result.error)
 
-    # 3. Dashboard
     with tabs[2]:
         if start_date and end_date:
             c_tit, c_eye = st.columns([6, 1])
             c_tit.subheader("Visão Geral")
             priv = c_eye.toggle("👁️", value=False)
-            
             inc, exp, bal = service.get_balance_view(user, start_date, end_date)
-            
             k1, k2, k3 = st.columns(3)
             with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Entradas</div><div class="kpi-value" style="color:#4CAF50">{UIManager.format_money(inc, priv)}</div></div>', unsafe_allow_html=True)
             with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Saídas</div><div class="kpi-value" style="color:#F44336">{UIManager.format_money(exp, priv)}</div></div>', unsafe_allow_html=True)
@@ -286,12 +256,10 @@ def main():
                 cor_saldo = primary_color if bal >= 0 else "#F44336"
                 st.markdown(f'<div class="kpi-card"><div class="kpi-label">Saldo</div><div class="kpi-value" style="color:{cor_saldo}">{UIManager.format_money(bal, priv)}</div></div>', unsafe_allow_html=True)
             st.divider()
-            
             if not df_global.empty:
                 mask = (df_global['date'].dt.date >= start_date) & (df_global['date'].dt.date <= end_date)
                 df_dash = df_global.loc[mask]
             else: df_dash = pd.DataFrame()
-
             if not df_dash.empty:
                 df_exp = df_dash[df_dash['type']=='Despesa']
                 if not df_exp.empty:
@@ -299,55 +267,37 @@ def main():
                     with c_ch:
                         grp = df_exp.groupby('category')['amount'].sum().reset_index()
                         grp['fmt'] = grp['amount'].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        
                         fig = px.pie(grp, values='amount', names='category', hole=0.6, 
                                      color_discrete_sequence=px.colors.qualitative.Pastel, custom_data=['fmt'])
-                        
                         fig.update_traces(textposition='outside', hovertemplate='<b>%{label}</b><br>%{customdata[0]}<br>(%{percent})')
-                        fig.update_layout(
-                            paper_bgcolor="rgba(0,0,0,0)", font_color="white", height=400,
-                            margin=dict(t=30, b=80, l=20, r=20), showlegend=True,
-                            legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5)
-                        )
+                        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="white", height=400, margin=dict(t=30, b=80, l=20, r=20), showlegend=True, legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5))
                         st.plotly_chart(fig, use_container_width=True)
-                    
                     with c_li:
                         st.markdown("##### 🏆 Maiores Gastos")
                         top = df_exp.groupby('category')['amount'].sum().sort_values(ascending=False).head(5)
                         for c, v in top.items(): 
                             st.write(f"**{c}**")
                             st.progress(min(v/exp, 1.0) if exp>0 else 0, text=f"{UIManager.format_money(v, priv)}")
-                    
                     st.divider()
                     st.subheader("📊 Histórico e Evolução de Gastos")
                     dt_trend_start = end_date - timedelta(days=180)
                     mask_trend = (df_global['date'].dt.date >= dt_trend_start) & (df_global['date'].dt.date <= end_date)
                     df_trend = df_global.loc[mask_trend]
                     df_trend_exp = df_trend[df_trend['type'] == 'Despesa'].copy()
-                    
                     if not df_trend_exp.empty:
                         df_trend_exp['mes_ano'] = df_trend_exp['date'].dt.strftime('%Y-%m')
                         df_trend_exp['mes_exibicao'] = df_trend_exp['date'].dt.strftime('%b/%Y').str.title()
                         df_grouped = df_trend_exp.groupby(['mes_ano', 'mes_exibicao', 'category'])['amount'].sum().reset_index().sort_values('mes_ano')
-                        
-                        fig_bar = px.bar(
-                            df_grouped, x='mes_exibicao', y='amount', color='category', 
-                            barmode='group', text_auto='.2s', color_discrete_sequence=px.colors.qualitative.Pastel
-                        )
+                        fig_bar = px.bar(df_grouped, x='mes_exibicao', y='amount', color='category', barmode='group', text_auto='.2s', color_discrete_sequence=px.colors.qualitative.Pastel)
                         fig_bar.update_traces(hovertemplate='<b>%{x}</b><br>%{data.name}<br><b>R$ %{y:,.2f}</b><extra></extra>')
-                        fig_bar.update_layout(
-                            xaxis_title=None, yaxis_title=None, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                            font_color="white", legend_title_text="", hovermode="x unified", height=400
-                        )
+                        fig_bar.update_layout(xaxis_title=None, yaxis_title=None, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white", legend_title_text="", hovermode="x unified", height=400)
                         fig_bar.update_yaxes(gridcolor='#333')
                         st.plotly_chart(fig_bar, use_container_width=True)
                     else: st.info("Sem histórico suficiente.")
-
                 else: st.info("Sem despesas no período.")
             else: st.warning("Sem dados.")
         else: st.info("Selecione um período.")
 
-    # 4. Investimentos
     with tabs[3]:
         st.subheader("Carteira de Ativos")
         if not df_global.empty:
@@ -356,14 +306,12 @@ def main():
                 tot = invs[invs['type']=='Receita']['amount'].sum() - invs[invs['type']=='Despesa']['amount'].sum()
                 cor_inv = primary_color if tot >= 0 else "#F44336"
                 st.markdown(f'<div class="kpi-card" style="margin-bottom:20px"><div class="kpi-label">Posição Estimada</div><div class="kpi-value" style="color:{cor_inv}">{UIManager.format_money(tot)}</div></div>', unsafe_allow_html=True)
-                
                 @st.dialog("Remover Ativo")
                 def modal_del_inv(tid):
                     st.write("Confirmar exclusão?")
                     c_a, c_b = st.columns(2)
                     if c_a.button("Sim", key=f"s_{tid}", type="primary"): service.delete_transaction(tid, user); st.rerun()
                     if c_b.button("Não", key=f"n_{tid}"): st.rerun()
-
                 for _, r in invs.iterrows():
                     c1,c2,c3,c4,c5 = st.columns([1.5, 2, 4, 2, 1])
                     lbl, cor = ("📤 Aporte", "orange") if r['type'] == 'Despesa' else ("📥 Resgate/Saldo", "green")
@@ -376,57 +324,37 @@ def main():
             else: st.info("Carteira vazia.")
         else: st.info("Carteira vazia.")
 
-    # 5. Metas
     with tabs[4]:
         c_h, c_b = st.columns([4,1])
         c_h.markdown("#### Monitoramento de Metas")
-        
         @st.dialog("Nova Meta")
         def modal_meta():
             ct = st.selectbox("Categoria", user_cats)
             lm = st.number_input("Limite (R$)", min_value=1.0, step=50.0, value=100.0)
             if st.button("Salvar"): db.set_meta(user, ct, lm); st.rerun()
-        
         @st.dialog("Excluir Meta")
         def delete_meta_dialog(cat):
             st.write(f"Remover meta de **{cat}**?"); 
             if st.button("Confirmar", type="primary"): db.delete_meta(user, cat); st.rerun()
-
         if c_b.button("➕ Adicionar"): modal_meta()
-        
         metas = db.get_metas(user)
         if not metas.empty and start_date and end_date:
             mask = (df_global['date'].dt.date >= start_date) & (df_global['date'].dt.date <= end_date)
             atual = df_global.loc[mask] if not df_global.empty else pd.DataFrame()
             gastos = atual[atual['type']=='Despesa'].groupby('category')['amount'].sum()
-            
             cols = st.columns(3) 
             for idx, r in metas.iterrows():
                 c, l = r['category'], r['limit_amount']
                 s = gastos.get(c, 0.0)
                 pct = s / l if l > 0 else 0
-                
                 bar_color = primary_color if pct < 0.75 else "#FFC107" if pct < 1.0 else "#FF5252"
-
-                fig = go.Figure(go.Indicator(
-                    mode = "gauge+number", value = s,
-                    number = {'prefix': "R$ ", 'font': {'family': "Poppins", 'color': "white", 'size': 24}},
-                    title = {'text': f"<span style='color:{primary_color}; font-size:1.4em'><b>{c}</b></span><br><span style='color:#888; font-size:0.8em'>Meta: {l:.0f}</span>"},
-                    gauge = {
-                        'axis': {'range': [None, max(l, s*1.1)], 'visible': False},
-                        'bar': {'color': bar_color, 'thickness': 0.2}, 
-                        'bgcolor': "rgba(0,0,0,0)", 'borderwidth': 0,
-                        'threshold': {'line': {'color': "white", 'width': 2}, 'thickness': 0.2, 'value': l}
-                    }
-                ))
+                fig = go.Figure(go.Indicator(mode = "gauge+number", value = s, number = {'prefix': "R$ ", 'font': {'family': "Poppins", 'color': "white", 'size': 24}}, title = {'text': f"<span style='color:{primary_color}; font-size:1.4em'><b>{c}</b></span><br><span style='color:#888; font-size:0.8em'>Meta: {l:.0f}</span>"}, gauge = {'axis': {'range': [None, max(l, s*1.1)], 'visible': False}, 'bar': {'color': bar_color, 'thickness': 0.2}, 'bgcolor': "rgba(0,0,0,0)", 'borderwidth': 0, 'threshold': {'line': {'color': "white", 'width': 2}, 'thickness': 0.2, 'value': l}}))
                 fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=30, r=30, t=50, b=20), height=220)
-                
                 with cols[idx % 3]:
                     st.plotly_chart(fig, use_container_width=True)
                     if st.button("🗑️", key=f"dm_{idx}"): delete_meta_dialog(c)
         else: st.info("Defina metas.")
 
-    # 6. Extrato
     with tabs[5]:
         with st.container(border=True):
             b1, b2 = st.columns(2)
@@ -439,16 +367,13 @@ def main():
                         i, e, _ = service.get_balance_view(user, start_date, end_date)
                         pdf = DocGenerator.to_pdf(user, mes, i, e, i-e, f"{start_date} - {end_date}")
                         if pdf: b2.download_button("📄 PDF", pdf, "relatorio.pdf")
-        
         st.divider()
         if not df_global.empty:
             v = df_global.head(50) 
-            
             @st.dialog("Apagar Registro")
             def confirm_del_row(tid):
                 st.write("Irreversível."); 
                 if st.button("Apagar", type="primary"): service.delete_transaction(tid, user); st.rerun()
-
             for _, r in v.iterrows():
                 c1,c2,c3,c4,c5,c6 = st.columns([1.5, 1.5, 2, 2, 2, 1])
                 val_fmt = f"R$ {r['amount']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -459,7 +384,6 @@ def main():
                 with c6:
                     if st.button("🗑️", key=f"del_{r['id']}"): confirm_del_row(r['id'])
                 st.markdown("---")
-            
             @st.dialog("RESETAR CONTA")
             def confirm_nuke():
                 st.error("Apagar TUDO?"); 
@@ -467,10 +391,9 @@ def main():
             if st.button("⚠️ Resetar Dados"): confirm_nuke()
         else: st.info("Vazio.")
 
-    # 7. Coach
     with tabs[6]:
         c_head, c_trash = st.columns([5, 1])
-        c_head.markdown("#### Coach Financeiro")
+        c_head.markdown("#### 🧠 Coach Financeiro")
         
         @st.dialog("Limpar Conversa")
         def confirm_clear_chat():
@@ -482,20 +405,23 @@ def main():
             with st.spinner("Analisando..."):
                 inc_t, _, _ = service.get_balance_view(user, start_date, end_date)
                 rep = AIManager.coach_financeiro(df_global.head(50), inc_t, mkt)
-                st.markdown(f'<div style="background:#262730;padding:20px;border-radius:10px;border-left:5px solid {primary_color};">{rep}</div>', unsafe_allow_html=True)
+                st.session_state.chat_history.append({"role": "assistant", "content": rep})
+                st.rerun()
         
         st.divider()
-        for msg in st.session_state.chat_history:
-            with st.chat_message(msg["role"]): st.markdown(msg["content"])
-            
+        
+ 
+        chat_container = st.container()
         if p := st.chat_input("Dúvida?"):
             st.session_state.chat_history.append({"role":"user", "content":p})
-            with st.chat_message("user"): st.markdown(p)
-            with st.chat_message("assistant"):
-                with st.spinner("Pensando..."):
-                    res = AIManager.chat_with_docs(p, df=df_global)
-                    st.markdown(res)
+            with st.spinner("Pensando..."):
+                res = AIManager.chat_with_docs(p, df=df_global)
             st.session_state.chat_history.append({"role":"assistant", "content":res})
+            st.rerun()
+        with chat_container:
+            for msg in st.session_state.chat_history:
+                with st.chat_message(msg["role"]): 
+                    st.markdown(msg["content"])
 
 if __name__ == "__main__":
     main()
