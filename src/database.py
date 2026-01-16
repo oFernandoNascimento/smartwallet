@@ -1,5 +1,4 @@
 import streamlit as st
-import psycopg2
 import logging
 import pandas as pd
 from datetime import datetime
@@ -44,14 +43,22 @@ class RobustDatabase:
         """
         @st.cache_resource(ttl=3600)
         def _get_cached_connection():
-            if "DATABASE_URL" not in st.secrets:
-                # Fallback SQLite OTIMIZADO
-                import sqlite3
-                conn = sqlite3.connect('smartwallet.db', check_same_thread=False)
-                try: conn.execute("PRAGMA journal_mode=WAL;")
-                except: pass
-                return conn
-            return psycopg2.connect(st.secrets["DATABASE_URL"])
+            # Verifica se existe a URL do Supabase nos segredos
+            if "DATABASE_URL" in st.secrets:
+                try:
+                    import psycopg2
+                    return psycopg2.connect(st.secrets["DATABASE_URL"])
+                except ImportError:
+                    st.error("Erro: Biblioteca 'psycopg2' não instalada. Adicione 'psycopg2-binary' ao requirements.txt ou pip install.")
+                    raise
+            
+            # Fallback SQLite OTIMIZADO (Se não tiver secrets ou falhar)
+            import sqlite3
+            conn = sqlite3.connect('smartwallet.db', check_same_thread=False)
+            try: conn.execute("PRAGMA journal_mode=WAL;")
+            except: pass
+            return conn
+            
         return _get_cached_connection()
 
     def init_tables(self) -> None:
@@ -59,6 +66,7 @@ class RobustDatabase:
         try:
             with self.get_conn() as conn:
                 with conn.cursor() as cur:
+                    # Tabelas Core
                     cur.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT, created_at TEXT)")
                     
                     cur.execute("""CREATE TABLE IF NOT EXISTS transactions (
@@ -77,9 +85,11 @@ class RobustDatabase:
                         id INTEGER PRIMARY KEY, user_id TEXT, name TEXT,
                         FOREIGN KEY(user_id) REFERENCES users(username))""")
                     
+                    # Índices de Performance
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_trans_user_date ON transactions(user_id, date);")
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_trans_category ON transactions(category);")
                     
+                    # Migrações de Colunas
                     try:
                         cur.execute("ALTER TABLE transactions ADD COLUMN proof_data BLOB")
                         cur.execute("ALTER TABLE transactions ADD COLUMN proof_name TEXT")
@@ -89,6 +99,7 @@ class RobustDatabase:
         except Exception as e:
             logging.critical(f"Database Init Failed: {e}")
 
+    # --- Autenticação ---
     
     def register(self, user: str, pwd: str) -> Tuple[bool, str]:
         if not user or not pwd: return False, "Campos vazios."
@@ -114,6 +125,7 @@ class RobustDatabase:
                     return cur.fetchone() is not None
         except Exception: return False
 
+    # --- Categorias ---
     
     def get_categories(self, uid: str) -> List[str]:
         try:
@@ -147,6 +159,7 @@ class RobustDatabase:
             return True
         except Exception: return False
 
+    # --- Transações ---
     
     def add_transaction(self, uid: str, date_val: Any, amt: float, cat: str, desc: str, type_: str, 
                         proof_file=None, proof_name: str=None) -> bool:
@@ -158,7 +171,12 @@ class RobustDatabase:
             with self.get_conn() as conn:
                 with conn.cursor() as cur:
                     proof_bytes = proof_file if isinstance(proof_file, bytes) else (proof_file.getvalue() if proof_file else None)
-                    p_data = psycopg2.Binary(proof_bytes) if proof_bytes and 'psycopg2' in str(type(conn)) else proof_bytes
+                    
+                    # Adaptação para Postgres (psycopg2) vs SQLite
+                    p_data = proof_bytes
+                    if 'psycopg2' in str(type(conn)):
+                        import psycopg2
+                        p_data = psycopg2.Binary(proof_bytes) if proof_bytes else None
 
                     cur.execute("""INSERT INTO transactions 
                         (user_id, date, amount, category, description, type, proof_data, proof_name) 
@@ -181,8 +199,8 @@ class RobustDatabase:
             return True
         except Exception: return False
 
+    # --- Leitura Otimizada ---
     def get_totals(self, uid: str, start_date=None, end_date=None) -> Tuple[float, float]:
-        """Usa agregação SQL para velocidade máxima."""
         try:
             with self.get_conn() as conn:
                 with conn.cursor() as cur:
@@ -203,26 +221,18 @@ class RobustDatabase:
         except Exception: return 0.0, 0.0
 
     def fetch_all(self, uid: str, limit: int=None, start_date=None, end_date=None) -> pd.DataFrame:
-        """
-        Busca otimizada. O 'ORDER BY' agora usa o índice criado na init_tables.
-        """
         try:
             with self.get_conn() as conn:
                 q = """SELECT id, date, amount, category, description, type, proof_name, proof_data 
                        FROM transactions WHERE user_id = %s"""
                 p = [uid]
-                
                 if start_date and end_date:
                     q += " AND date >= %s AND date <= %s"
                     p.extend([str(start_date), str(end_date)])
-                
-                # Este ORDER BY agora é instantâneo graças ao INDEX
                 q += " ORDER BY date DESC, id DESC"
-                
                 if limit:
                     q += " LIMIT %s"
                     p.append(limit)
-                
                 return pd.read_sql_query(q, conn, params=p)
         except Exception:
             return pd.DataFrame(columns=['id', 'date', 'amount', 'category', 'description', 'type'])
