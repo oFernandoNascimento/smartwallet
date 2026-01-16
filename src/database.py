@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import List, Tuple, Any
 from src.auth import SecurityManager
 from src.utils import DomainValidators
+import sqlite3 # Importação padrão garantida
 
 # Configurações de Log
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,7 +20,7 @@ CATEGORIAS_BASE: List[str] = [
 class RobustDatabase:
     """
     Gerenciador de Banco de Dados Enterprise.
-    Encapsula CRUD, conexões, migrações e OTIMIZAÇÃO DE PERFORMANCE.
+    Versão Híbrida com Fallback Automático (Supabase -> SQLite).
     """
     
     _instance = None
@@ -32,28 +33,29 @@ class RobustDatabase:
         return cls._instance
     
     def __init__(self):
-        # Evita recriar tabelas a cada clique (Performance)
         if not self.initialized:
             self.init_tables()
             self.initialized = True
 
     def get_conn(self):
         """
-        Retorna conexão (Singleton Cache).
+        Tenta conectar no Postgres (Supabase). 
+        Se falhar por QUALQUER motivo (biblioteca, senha, internet), usa SQLite local.
         """
         @st.cache_resource(ttl=3600)
         def _get_cached_connection():
-            # Verifica se existe a URL do Supabase nos segredos
+            # 1. Tenta Conectar no Supabase (Postgres)
             if "DATABASE_URL" in st.secrets:
                 try:
                     import psycopg2
-                    return psycopg2.connect(st.secrets["DATABASE_URL"])
+                    conn = psycopg2.connect(st.secrets["DATABASE_URL"])
+                    return conn
                 except ImportError:
-                    st.error("Erro: Biblioteca 'psycopg2' não instalada. Adicione 'psycopg2-binary' ao requirements.txt ou pip install.")
-                    raise
+                    print("⚠️ Aviso: 'psycopg2' não instalado. Usando SQLite local.")
+                except Exception as e:
+                    print(f"⚠️ Aviso: Erro ao conectar no Supabase ({e}). Usando SQLite local.")
             
-            # Fallback SQLite OTIMIZADO (Se não tiver secrets ou falhar)
-            import sqlite3
+            # 2. Fallback para SQLite (Garantia de funcionamento)
             conn = sqlite3.connect('smartwallet.db', check_same_thread=False)
             try: conn.execute("PRAGMA journal_mode=WAL;")
             except: pass
@@ -62,7 +64,7 @@ class RobustDatabase:
         return _get_cached_connection()
 
     def init_tables(self) -> None:
-        """Inicializa esquema, migrações e ÍNDICES DE PERFORMANCE."""
+        """Inicializa esquema, migrações e índices."""
         try:
             with self.get_conn() as conn:
                 with conn.cursor() as cur:
@@ -172,11 +174,14 @@ class RobustDatabase:
                 with conn.cursor() as cur:
                     proof_bytes = proof_file if isinstance(proof_file, bytes) else (proof_file.getvalue() if proof_file else None)
                     
-                    # Adaptação para Postgres (psycopg2) vs SQLite
+                    # Lógica Híbrida para BLOB (Postgres vs SQLite)
                     p_data = proof_bytes
+                    # Só tenta usar Binary do psycopg2 se a conexão for realmente do Postgres
                     if 'psycopg2' in str(type(conn)):
-                        import psycopg2
-                        p_data = psycopg2.Binary(proof_bytes) if proof_bytes else None
+                        try:
+                            import psycopg2
+                            p_data = psycopg2.Binary(proof_bytes) if proof_bytes else None
+                        except: pass # Se falhar, tenta passar bytes direto
 
                     cur.execute("""INSERT INTO transactions 
                         (user_id, date, amount, category, description, type, proof_data, proof_name) 
