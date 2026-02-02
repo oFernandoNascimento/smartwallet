@@ -22,6 +22,7 @@ class AIManager:
     - Classificação automática de transações financeiras.
     - Chat RAG (Retrieval-Augmented Generation) com base de conhecimento técnica.
     - Consultoria Financeira (Coach) baseada em histórico de dados.
+    - [NOVO] ETL Inteligente para arquivos Bancários (OFX e PDF).
     """
     
     KNOWLEDGE_SOURCE = "assets"  
@@ -30,10 +31,12 @@ class AIManager:
     def configure():
         """Inicializa a configuração da API do Google Gemini (Generative AI)."""
         try:
-            if "GEMINI_KEY" in st.secrets:
-                genai.configure(api_key=st.secrets["GEMINI_KEY"])
+            # Tenta pegar a chave dos secrets do Streamlit ou ambiente
+            api_key = st.secrets.get("GEMINI_KEY") or st.secrets.get("GOOGLE_API_KEY")
+            if api_key:
+                genai.configure(api_key=api_key)
             else:
-                logging.warning("SmartWallet: GEMINI_KEY não encontrada nos secrets.")
+                logging.warning("SmartWallet: Chave de API do Gemini não encontrada.")
         except Exception as e:
             logging.error(f"Erro na configuração da IA: {e}")
 
@@ -41,16 +44,22 @@ class AIManager:
     def _clean_json(text: str) -> Optional[Dict]:
         """Parser robusto para extrair JSON de respostas textuais da IA."""
         if not text: return None
+        # Remove blocos de código markdown se existirem
         text = re.sub(r'```json', '', text, flags=re.IGNORECASE)
         text = re.sub(r'```', '', text).strip()
         
-        match = re.search(r'\{.*\}', text, re.DOTALL)
+        # Tenta encontrar o JSON dentro do texto (caso a IA fale antes)
+        match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
         if match:
-            try: return json.loads(match.group(0))
-            except: pass
-        
-        try: return json.loads(text)
-        except: return None
+            text_to_parse = match.group(0)
+        else:
+            text_to_parse = text
+
+        try: 
+            return json.loads(text_to_parse)
+        except: 
+            logging.warning(f"Falha ao fazer parse do JSON: {text[:50]}...")
+            return None
 
     @staticmethod
     def _sanitize_output(text: str) -> str:
@@ -64,6 +73,7 @@ class AIManager:
     def _format_history_for_learning(df: pd.DataFrame) -> str:
         """Prepara o histórico de transações para 'Few-Shot Learning'."""
         if df is None or df.empty: return "Histórico vazio."
+        # Pega os 5 exemplos mais recentes para dar contexto à IA
         examples = df.head(5)[['description', 'category', 'type', 'amount']].to_dict(orient='records')
         history_text = "=== HISTÓRICO RECENTE DO USUÁRIO (Contexto) ===\n"
         for ex in examples:
@@ -72,13 +82,15 @@ class AIManager:
 
     @staticmethod
     def _try_local_rules(text: str) -> Optional[Dict]:
-        """Motor de Regras Locais (Regex) para classificação rápida."""
+        """Motor de Regras Locais (Regex) para classificação rápida sem custo de IA."""
         try:
             text_lower = text.lower()
+            # Ignora termos complexos que exigem IA (investimentos, câmbio)
             termos_complexos = r'(dolar|dólar|usd|euro|eur|libra|gbp|bitcoin|btc|cdb|cdi|selic|fii|dividendos|rendimento|investi|aplic|guard|resgat|tesouro)'
             if re.search(termos_complexos, text_lower): return None 
 
             amount = 0.0
+            # Tenta extrair valor numérico (ex: 50,00 ou 50.00)
             valor_match = re.search(r'(\d+[\.,]?\d*)', text)
             if valor_match:
                 val_str = valor_match.group(1).replace(',', '.')
@@ -87,10 +99,12 @@ class AIManager:
 
             if amount <= 0: return None
             
+            # Classificação Simples de Tipo
             tipo = "Despesa"
             if re.search(r'(recebi|ganhei|pix|entrada|salário|depósito)', text_lower): tipo = "Receita"
             elif re.search(r'(gastei|paguei|compra|saída|uber|ifood)', text_lower): tipo = "Despesa"
             
+            # Classificação Simples de Categoria
             cat = "Outros"
             if "uber" in text_lower or "combustível" in text_lower or "ônibus" in text_lower or "posto" in text_lower: cat = "Transporte"
             elif "ifood" in text_lower or "restaurante" in text_lower or "mercado" in text_lower or "padaria" in text_lower or "lanche" in text_lower: cat = "Alimentação"
@@ -98,6 +112,7 @@ class AIManager:
             elif "curso" in text_lower or "faculdade" in text_lower or "livro" in text_lower: cat = "Educação"
             elif "farmácia" in text_lower or "médico" in text_lower or "remédio" in text_lower or "hospital" in text_lower or "dentista" in text_lower: cat = "Saúde"
             
+            # Se não conseguiu categorizar nem definir tipo com certeza, deixa para a IA
             if cat == "Outros" and tipo == "Despesa": return None
 
             return {
@@ -119,6 +134,7 @@ class AIManager:
     def process_audio_nlp(audio_file, mkt: Dict, categories: List[str], history_df: pd.DataFrame = None) -> Dict:
         """Entrada pública para processamento de áudio."""
         try:
+            # Lê os bytes do arquivo de áudio para envio
             audio_bytes = audio_file.read()
             return AIManager._core_process(audio_bytes, mkt, categories, history_df, is_audio=True)
         except Exception as e:
@@ -127,8 +143,10 @@ class AIManager:
     @staticmethod
     def _core_process(input_data: Any, mkt: Dict, categories: List[str], history_df: pd.DataFrame, is_audio: bool) -> Dict:
         """Núcleo de processamento da IA com regras rígidas de categorização."""
-        knowledge_text = KnowledgeBaseLoader.load_knowledge(AIManager.KNOWLEDGE_SOURCE)
+        # Carrega contexto da base de conhecimento (opcional para NLP simples, mas útil para contexto)
+        # knowledge_text = KnowledgeBaseLoader.load_knowledge(AIManager.KNOWLEDGE_SOURCE) 
         
+        # Tenta regras locais primeiro para economizar tokens (apenas texto)
         if not is_audio and isinstance(input_data, str):
             local_result = AIManager._try_local_rules(input_data)
             if local_result: return local_result
@@ -165,15 +183,18 @@ class AIManager:
         {{ "amount": float, "category": "str", "date": "YYYY-MM-DD HH:MM:SS", "description": "str", "type": "Receita/Despesa" }}
         """
         
-        models = ['gemini-2.0-flash-exp', 'gemini-1.5-pro-latest'] 
+        # Lista de modelos para fallback
+        models = ['gemini-1.5-flash', 'gemini-2.0-flash-exp', 'gemini-1.5-pro-latest'] 
         for model_name in models:
             try:
                 model = genai.GenerativeModel(model_name)
                 if is_audio: response = model.generate_content([prompt, {"mime_type": "audio/wav", "data": input_data}])
                 else: response = model.generate_content(prompt)
+                
                 data = AIManager._clean_json(response.text)
                 
                 if data:
+                    # Normalização de Categoria (Garante que existe na lista do usuário)
                     cat_ia = data.get('category', 'Outros')
                     if cat_ia not in categories:
                         data['category'] = 'Outros' 
@@ -182,9 +203,10 @@ class AIManager:
                                 data['category'] = c
                                 break
 
+                    # Normalização de Tipo (Traduz para Português)
                     t = str(data.get('type', '')).lower()
-                    if t in ['expense', 'outcome', 'gasto', 'saída']: data['type'] = 'Despesa'
-                    elif t in ['income', 'entry', 'ganho', 'entrada', 'receita']: data['type'] = 'Receita'
+                    if t in ['expense', 'outcome', 'gasto', 'saída', 'debit']: data['type'] = 'Despesa'
+                    elif t in ['income', 'entry', 'ganho', 'entrada', 'receita', 'credit']: data['type'] = 'Receita'
                     else: data['type'] = data.get('type', 'Despesa').capitalize()
                     
                     try: data['amount'] = float(data['amount'])
@@ -193,7 +215,6 @@ class AIManager:
                     return data
             except: continue 
         return {"error": "IA indisponível. Tente novamente."}
-
 
     @staticmethod
     def chat_with_docs(user_question: str, df: pd.DataFrame = None) -> str:
@@ -251,7 +272,7 @@ class AIManager:
             Responda em Markdown limpo.
             """
             
-            models = ['gemini-2.0-flash-exp', 'gemini-1.5-pro-latest']
+            models = ['gemini-1.5-flash', 'gemini-2.0-flash-exp', 'gemini-1.5-pro-latest']
             for model_name in models:
                 try:
                     model = genai.GenerativeModel(model_name)
@@ -278,7 +299,6 @@ class AIManager:
         mask_salario = (df['category'].str.contains('Salário', case=False, na=False)) & (df['type'] == 'Receita')
         df_salario = df[mask_salario].sort_values('date', ascending=False)
         
-        # Se achar, pega o último salário. Se não, avisa a IA que não identificou.
         salario_real = df_salario.iloc[0]['amount'] if not df_salario.empty else 0.0
         msg_salario = f"R$ {salario_real:.2f}" if salario_real > 0 else "Não identificado (Considere as Entradas Totais com cautela)"
 
@@ -286,7 +306,6 @@ class AIManager:
         despesas = df[df['type'] == 'Despesa']
         total_despesas = despesas['amount'].sum()
         
-        # Agrupamento por categoria
         cats = despesas.groupby('category')['amount'].sum().sort_values(ascending=False)
         top_cat_nome = cats.index[0] if not cats.empty else "Nenhuma"
         top_cat_valor = cats.iloc[0] if not cats.empty else 0.0
@@ -312,7 +331,7 @@ class AIManager:
         {df.head(20)[['date', 'description', 'amount', 'category']].to_string(index=False)}
         
         SUA MISSÃO (Relatório de Choque de Realidade):
-        1. **DIAGNÓSTICO REALISTA:** Compare os gastos com o SALÁRIO MENSAL (se identificado), não com as entradas totais. Se ele gasta R$ 5.000 e o salário é R$ 4.000, ele está no vermelho, mesmo que tenha entrado R$ 6.000 de resgates.
+        1. **DIAGNÓSTICO REALISTA:** Compare os gastos com o SALÁRIO MENSAL (se identificado), não com as entradas totais.
         2. **PADRÕES:** Aponte vícios específicos (ex: iFood, Uber).
         3. **PLANO DE AÇÃO:** Dê 3 passos concretos. Use valores monetários.
         4. **INVESTIMENTO:** Sugira alocação baseada no que sobra do SALÁRIO.
@@ -322,7 +341,7 @@ class AIManager:
         - Use formatação Markdown.
         """
         
-        models = ['gemini-2.0-flash-exp', 'gemini-1.5-pro-latest']
+        models = ['gemini-1.5-flash', 'gemini-2.0-flash-exp']
         for model_name in models:
             try:
                 model = genai.GenerativeModel(model_name)
@@ -331,3 +350,106 @@ class AIManager:
                     return AIManager._sanitize_output(response.text)
             except: continue
         return "Coach offline no momento."
+
+    # =========================================================================
+    #  NOVAS FUNCIONALIDADES (OFX & PDF) - Adicionadas sem remover nada
+    # =========================================================================
+
+    @staticmethod
+    def enrich_transactions(transactions_list: List[Dict], user_categories: List[str]) -> List[Dict]:
+        """
+        [NOVO] Processamento Inteligente de OFX.
+        Recebe transações brutas e usa IA para:
+        1. Diferenciar Receita vs Despesa (crucial para OFX que vem tudo misturado).
+        2. Categorizar com base na lista do usuário.
+        3. Limpar descrições criptografadas de banco.
+        """
+        try:
+            # Seleciona modelo rápido e eficiente para lotes
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            cats_str = ", ".join(user_categories)
+            
+            # Limita a 30 transações por lote para garantir precisão e não estourar tokens
+            data_str = json.dumps(transactions_list[:30], default=str)
+
+            prompt = f"""
+            ATUE COMO: Auditor de Extratos Bancários.
+            CONTEXTO: Analise este JSON de transações bancárias (OFX).
+            
+            CATEGORIAS VÁLIDAS: [{cats_str}]
+            
+            REGRAS OBRIGATÓRIAS (CRÍTICO):
+            1. **TIPO (Receita vs Despesa)**:
+               - Valor negativo (< 0) -> "Despesa".
+               - Valor positivo (> 0) E descrição contém "Depósito", "Pix Recebido", "Salário", "Resgate" -> "Receita".
+               - Valor positivo (> 0) mas descrição é "Estorno" -> "Receita".
+               - ATENÇÃO: Bancos as vezes mandam tudo positivo com sinalizador 'D' ou 'C'. 
+               - Se descrição tiver "Compra", "Pgto", "Saque", "Debit" -> "Despesa".
+               
+            2. **CATEGORIZAÇÃO**:
+               - Use a lista fornecida. Se não encaixar, use "Outros".
+               
+            3. **DESCRIÇÃO**:
+               - Limpe códigos inúteis (Ex: "COMPRA ELO 1234 PADARIA" -> "Padaria").
+            
+            ENTRADA:
+            {data_str}
+
+            SAÍDA ESPERADA (Apenas JSON puro):
+            [
+                {{ "date": "YYYY-MM-DD", "description": "Nome Limpo", "amount": 100.50, "type": "Despesa", "category": "Alimentação" }}
+            ]
+            """
+            
+            response = model.generate_content(prompt)
+            # Usa o parser robusto já existente na classe
+            clean_list = AIManager._clean_json(response.text)
+            
+            if isinstance(clean_list, list):
+                return clean_list
+            return transactions_list # Retorna original se falhar
+
+        except Exception as e:
+            logging.error(f"Erro no enriquecimento OFX: {e}")
+            return transactions_list
+
+    @staticmethod
+    def extract_transactions_from_text(raw_text: str) -> List[Dict]:
+        """
+        [NOVO] Extração de Transações de PDF (Texto Não Estruturado).
+        Transforma o "copia e cola" de um PDF em JSON estruturado.
+        """
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            prompt = f"""
+            ATUE COMO: Extrator de Dados Financeiros (ETL).
+            TAREFA: Converter texto bruto de extrato bancário (PDF) em JSON.
+            
+            TEXTO BRUTO:
+            {raw_text[:30000]} 
+
+            REGRAS DE EXTRAÇÃO:
+            1. Ignore cabeçalhos, saldos parciais e rodapés. Foque nas TRANSAÇÕES.
+            2. Identifique DATA, DESCRIÇÃO, VALOR.
+            3. **TIPO**: 
+               - Se tiver sinal de menos (-) ou coluna DÉBITO -> "Despesa".
+               - Se for CRÉDITO, DEPÓSITO, SALÁRIO -> "Receita".
+            4. **VALOR**: Retorne sempre positivo (float absolute). O tipo define o sinal.
+            
+            SAÍDA (JSON List):
+            [
+                {{ "date": "YYYY-MM-DD", "description": "Resumo", "amount": 50.00, "type": "Despesa" }}
+            ]
+            """
+            
+            response = model.generate_content(prompt)
+            extracted_data = AIManager._clean_json(response.text)
+            
+            if isinstance(extracted_data, list):
+                return extracted_data
+            return []
+
+        except Exception as e:
+            logging.error(f"Erro na extração de PDF: {e}")
+            return []

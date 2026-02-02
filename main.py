@@ -20,6 +20,13 @@ from src.ui import UIManager
 from src.utils import get_market_data, DocGenerator
 from src.services.transaction_service import TransactionService
 
+# <--- NOVO: Importação do módulo OFX que criamos
+try:
+    from src.services.ofx_importer import parse_ofx_file
+except ImportError:
+    # Fallback caso o arquivo ainda não tenha sido criado para não quebrar o app
+    parse_ofx_file = None 
+
 # Configuração de Localização
 try:
     locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
@@ -224,6 +231,37 @@ def main():
                     else: st.error(res['error'])
 
     with tabs[1]:
+        # --- NOVO: SEÇÃO DE IMPORTAÇÃO OFX ---
+        st.markdown("### 📥 Importação Automática (OFX)")
+        with st.expander("📂 Clique para importar Extrato Bancário", expanded=False):
+            up_ofx = st.file_uploader("Arquivo .OFX do Banco", type=["ofx"], key="ofx_up")
+            if up_ofx and parse_ofx_file:
+                if st.button("Processar Arquivo", type="primary"):
+                    with st.spinner("Lendo extrato..."):
+                        transacoes = parse_ofx_file(up_ofx)
+                        count = 0
+                        for tr in transacoes:
+                            # Converte tipos do OFX para o padrão do app
+                            tipo_final = "Receita" if tr['type'] == 'CREDIT' else "Despesa"
+                            # Tenta classificar como 'Outros' inicialmente
+                            cat_final = "Outros" 
+                            
+                            res = service.register_transaction(
+                                user, tr['date'], tr['amount'], cat_final, 
+                                tr['description'], tipo_final
+                            )
+                            if res.is_success: count += 1
+                        
+                        st.success(f"{count} transações importadas com sucesso!")
+                        time.sleep(1.5)
+                        st.rerun()
+            elif up_ofx and not parse_ofx_file:
+                st.error("Módulo 'ofx_importer.py' não encontrado em src/services.")
+
+        st.divider()
+        
+        # --- CÓDIGO MANUAL ORIGINAL ---
+        st.markdown("### ✍️ Lançamento Manual")
         c1, c2 = st.columns(2)
         default_val = st.session_state.manual_form.get('amount', 0.0)
         default_desc = st.session_state.manual_form.get('desc', "")
