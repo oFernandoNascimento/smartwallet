@@ -1,6 +1,7 @@
 import streamlit as st
 import sys
 import os
+import logging
 
 # Configuração de Path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -13,23 +14,25 @@ from datetime import datetime, timedelta
 import pytz
 import locale
 
-# Importações Clean Code
+# Importações
 from src.database import RobustDatabase
 from src.ai_engine import AIManager
 from src.ui import UIManager
 from src.utils import get_market_data, DocGenerator
 from src.services.transaction_service import TransactionService
 
-# <--- NOVO: Importação do módulo OFX que criamos
+# Configuração de Logs
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Importação Segura do Módulo OFX
 try:
     from src.services.ofx_importer import parse_ofx_file
 except ImportError:
-    # Fallback caso o arquivo ainda não tenha sido criado para não quebrar o app
     parse_ofx_file = None 
 
 # Configuração de Localização
-try:
-    locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+try: locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
 except:
     try: locale.setlocale(locale.LC_ALL, 'Portuguese_Brazil.1252')
     except: pass
@@ -44,7 +47,6 @@ st.set_page_config(
 FUSO_BR = pytz.timezone('America/Sao_Paulo')
 CATEGORIAS_BASE = ["Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", "Salário", "Investimentos", "Educação", "Viagem", "Compras", "Assinaturas", "Presentes", "Outros"]
 
-# --- LÓGICA DE TEMAS ---
 THEMES = {
     "🟢 Verde": "#4CAF50",
     "🔵 Azul": "#2962FF",
@@ -65,12 +67,9 @@ def get_contrast_color(hex_color):
 def header_relogio(mkt, theme_color):
     now = datetime.now(FUSO_BR)
     d_str = now.strftime("%A, %d de %B de %Y").title()
-    t_map = {
-        "Monday":"Segunda","Tuesday":"Terça","Wednesday":"Quarta","Thursday":"Quinta","Friday":"Sexta","Saturday":"Sábado","Sunday":"Domingo",
-        "January":"Janeiro","February":"Fevereiro","March":"Março","April":"Abril","May":"Maio","June":"Junho","July":"Julho","August":"Agosto","September":"Setembro","October":"Outubro","November":"Novembro","December":"Dezembro"
-    }
-    if "Monday" in d_str or "January" in d_str or "," in d_str: 
-        for en, pt in t_map.items(): d_str = d_str.replace(en, pt)
+    t_map = {"Monday":"Segunda","Tuesday":"Terça","Wednesday":"Quarta","Thursday":"Quinta","Friday":"Sexta","Saturday":"Sábado","Sunday":"Domingo","January":"Janeiro","February":"Fevereiro","March":"Março","April":"Abril","May":"Maio","June":"Junho","July":"Julho","August":"Agosto","September":"Setembro","October":"Outubro","November":"Novembro","December":"Dezembro"}
+    for en, pt in t_map.items(): 
+        if en in d_str: d_str = d_str.replace(en, pt)
     
     c1, c2 = st.columns([3, 1])
     c1.markdown(f"### <span style='color:{theme_color}'>{d_str}</span> | {now.strftime('%H:%M:%S')}", unsafe_allow_html=True)
@@ -82,8 +81,7 @@ def main():
     try:
         service = TransactionService()
     except Exception as e:
-        st.error(f"Critical Error: {e}")
-        return
+        st.error(f"Critical Error: {e}"); return
     
     AIManager.configure()
     
@@ -93,7 +91,6 @@ def main():
     if 'user' not in st.session_state: st.session_state.user = None
     if 'manual_form' not in st.session_state: st.session_state.manual_form = {}
     if 'chat_history' not in st.session_state: st.session_state.chat_history = []
-    
     if 'theme_choice' not in st.session_state: st.session_state.theme_choice = "🟢 Verde"
 
     # --- LOGIN ---
@@ -109,7 +106,6 @@ def main():
                     cl, cm, cr = st.columns([1, 1, 1])
                     with cm: st.image(logo_path, use_container_width=True)
                 st.markdown('<h2 style="text-align: center; color: #4CAF50;">SmartWallet Personal</h2>', unsafe_allow_html=True)
-                st.markdown('<p style="text-align: center; color: #888;">Gestão Financeira Inteligente</p>', unsafe_allow_html=True)
                 with st.form("login"):
                     u = st.text_input("Usuário")
                     p = st.text_input("Senha", type="password")
@@ -123,7 +119,7 @@ def main():
             with st.expander("Primeiro Acesso"):
                 nu, np = st.text_input("Novo Usuário"), st.text_input("Nova Senha", type="password")
                 if st.button("Registrar"): 
-                    ok, msg = db.register(nu.strip(), np.strip()); 
+                    ok, msg = db.register(nu.strip(), np.strip())
                     if ok: st.success(msg) 
                     else: st.error(msg)
         return
@@ -231,36 +227,39 @@ def main():
                     else: st.error(res['error'])
 
     with tabs[1]:
-        # --- NOVO: SEÇÃO DE IMPORTAÇÃO OFX ---
+        # --- SEÇÃO DE IMPORTAÇÃO OFX ---
         st.markdown("### 📥 Importação Automática (OFX)")
         with st.expander("📂 Clique para importar Extrato Bancário", expanded=False):
-            up_ofx = st.file_uploader("Arquivo .OFX do Banco", type=["ofx"], key="ofx_up")
-            if up_ofx and parse_ofx_file:
-                if st.button("Processar Arquivo", type="primary"):
-                    with st.spinner("Lendo extrato..."):
-                        transacoes = parse_ofx_file(up_ofx)
-                        count = 0
-                        for tr in transacoes:
-                            # Converte tipos do OFX para o padrão do app
-                            tipo_final = "Receita" if tr['type'] == 'CREDIT' else "Despesa"
-                            # Tenta classificar como 'Outros' inicialmente
-                            cat_final = "Outros" 
+            if parse_ofx_file:
+                up_ofx = st.file_uploader("Arquivo .OFX do Banco", type=["ofx"], key="ofx_up")
+                if up_ofx:
+                    if st.button("Processar Arquivo", type="primary"):
+                        with st.spinner("Lendo extrato..."):
+                            transacoes = parse_ofx_file(up_ofx)
                             
-                            res = service.register_transaction(
-                                user, tr['date'], tr['amount'], cat_final, 
-                                tr['description'], tipo_final
-                            )
-                            if res.is_success: count += 1
-                        
-                        st.success(f"{count} transações importadas com sucesso!")
-                        time.sleep(1.5)
-                        st.rerun()
-            elif up_ofx and not parse_ofx_file:
-                st.error("Módulo 'ofx_importer.py' não encontrado em src/services.")
+                            if not transacoes:
+                                st.warning("Nenhuma transação encontrada ou erro ao ler arquivo.")
+                            else:
+                                count = 0
+                                for tr in transacoes:
+                                    # [CORREÇÃO SÊNIOR] Respeita o tipo definido no importer
+                                    tipo_final = tr['type']  
+                                    cat_final = "Outros"
+                                    
+                                    res = service.register_transaction(
+                                        user, tr['date'], tr['amount'], cat_final, 
+                                        tr['description'], tipo_final
+                                    )
+                                    if res.is_success: count += 1
+                                
+                                st.success(f"{count} transações importadas com sucesso!")
+                                time.sleep(1.5)
+                                st.rerun()
+            else:
+                st.error("Módulo 'ofx_importer' não carregado ou dependências faltando (instale 'ofxparse').")
 
         st.divider()
         
-        # --- CÓDIGO MANUAL ORIGINAL ---
         st.markdown("### ✍️ Lançamento Manual")
         c1, c2 = st.columns(2)
         default_val = st.session_state.manual_form.get('amount', 0.0)
@@ -317,7 +316,7 @@ def main():
                             st.write(f"**{c}**")
                             st.progress(min(v/exp, 1.0) if exp>0 else 0, text=f"{UIManager.format_money(v, priv)}")
                     st.divider()
-                    st.subheader("📊 Histórico e Evolução de Gastos")
+                    st.subheader("📊 Histórico e Evolução")
                     dt_trend_start = end_date - timedelta(days=180)
                     mask_trend = (df_global['date'].dt.date >= dt_trend_start) & (df_global['date'].dt.date <= end_date)
                     df_trend = df_global.loc[mask_trend]
@@ -403,8 +402,14 @@ def main():
                     mes = df_global.loc[mask]
                     if not mes.empty:
                         i, e, _ = service.get_balance_view(user, start_date, end_date)
-                        pdf = DocGenerator.to_pdf(user, mes, i, e, i-e, f"{start_date} - {end_date}")
-                        if pdf: b2.download_button("📄 PDF", pdf, "relatorio.pdf")
+                        
+                        # --- GERAÇÃO DE PDF SEGURA ---
+                        pdf_data = DocGenerator.to_pdf(user, mes, i, e, i-e, f"{start_date} - {end_date}")
+                        if pdf_data: 
+                            b2.download_button("📄 PDF", pdf_data, "relatorio.pdf")
+                        else:
+                            # Se falhar, mostra aviso, mas não quebra
+                            b2.warning("PDF indisponível (verifique logs/dados).")
         st.divider()
         if not df_global.empty:
             v = df_global.head(50) 
@@ -448,7 +453,6 @@ def main():
         
         st.divider()
         
- 
         chat_container = st.container()
         if p := st.chat_input("Dúvida?"):
             st.session_state.chat_history.append({"role":"user", "content":p})
