@@ -8,3 +8,4 @@ psycopg2-binary
 openpyxl
 fpdf
 python-dotenv
+ofxparse
