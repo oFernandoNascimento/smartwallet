@@ -20,17 +20,22 @@ def parse_ofx_file(file_buffer: io.BytesIO) -> List[Dict[str, Any]]:
         transactions_data = []
 
         for transaction in statement.transactions:
+            #  Converte tipos do Inglês (OFX) para o padrão do seu App
+            tipo_br = "Receita" if transaction.type == 'CREDIT' else "Despesa"
+            
+            #  Garante que o valor seja sempre positivo 
+            valor_corrigido = abs(float(transaction.amount))
+
             transactions_data.append({
                 "date": transaction.date,
-                "description": transaction.memo, # Alguns bancos usam .payee
-                "amount": float(transaction.amount),
+                "description": transaction.memo, 
+                "amount": valor_corrigido,
                 "transaction_id": transaction.id,
-                "type": transaction.type
+                "type": tipo_br  
             })
 
         return transactions_data
 
     except Exception as e:
-        # Em produção, substitua por um logger real (ex: logging.error(e))
         print(f"[Erro no Importador OFX]: {e}")
         return []
