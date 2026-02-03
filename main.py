@@ -194,7 +194,8 @@ def main():
         df_global['date'] = pd.to_datetime(df_global['date'], errors='coerce')
         df_global = df_global.sort_values('date', ascending=False)
     
-    tabs = st.tabs(["🤖 IA Rápida", "✍️ Manual", "📊 Dashboard", "💰 Investimentos", "🎯 Metas", "📑 Extrato", "🧠 Coach"])
+    # [EXPANSÃO] Adicionado "📥 Importação" para ler Excel
+    tabs = st.tabs(["🤖 IA Rápida", "📥 Importação", "✍️ Manual", "📊 Dashboard", "💰 Investimentos", "🎯 Metas", "📑 Extrato", "🧠 Coach"])
 
     with tabs[0]:
         st.markdown(f"""<div style="margin-bottom: 20px;"><h2 style="font-weight: 600; color: {primary_color};">Assistente Financeiro</h2><p style="color: #888;">Registro por voz ou texto com Inteligência Artificial.</p></div>""", unsafe_allow_html=True)
@@ -227,39 +228,82 @@ def main():
                     else: st.error(res['error'])
 
     with tabs[1]:
-        # --- SEÇÃO DE IMPORTAÇÃO OFX ---
-        st.markdown("### 📥 Importação Automática (OFX)")
-        with st.expander("📂 Clique para importar Extrato Bancário", expanded=False):
-            if parse_ofx_file:
-                up_ofx = st.file_uploader("Arquivo .OFX do Banco", type=["ofx"], key="ofx_up")
-                if up_ofx:
-                    if st.button("Processar Arquivo", type="primary"):
-                        with st.spinner("Lendo extrato..."):
-                            transacoes = parse_ofx_file(up_ofx)
-                            
-                            if not transacoes:
-                                st.warning("Nenhuma transação encontrada ou erro ao ler arquivo.")
+        # --- SEÇÃO DE IMPORTAÇÃO UNIFICADA (OFX, Excel, CSV) ---
+        st.markdown(f"### 📥 Central de Importação")
+        st.caption("Suporta arquivos do banco (.ofx) e planilhas (.xlsx, .csv).")
+        
+        up_file = st.file_uploader("Selecione Arquivo", type=["ofx", "xlsx", "csv"], key="univ_up")
+        
+        if up_file:
+            ftype = up_file.name.split('.')[-1].lower()
+            
+            # --- Lógica OFX ---
+            if ftype == 'ofx':
+                if parse_ofx_file:
+                    if st.button("Processar OFX", type="primary"):
+                        with st.spinner("Lendo extrato OFX..."):
+                            transacoes = parse_ofx_file(up_file)
+                            if not transacoes: st.warning("Erro ou arquivo vazio.")
                             else:
                                 count = 0
                                 for tr in transacoes:
-                                    # [CORREÇÃO SÊNIOR] Respeita o tipo definido no importer
-                                    tipo_final = tr['type']  
-                                    cat_final = "Outros"
+                                    res = service.register_transaction(user, tr['date'], tr['amount'], "Outros", tr['description'], tr['type'])
+                                    if res.is_success: count += 1
+                                st.success(f"{count} transações importadas!"); time.sleep(1.5); st.rerun()
+                else: st.error("Módulo OFX não disponível.")
+
+            # --- Lógica EXCEL / CSV ---
+            elif ftype in ['xlsx', 'csv']:
+                st.info("ℹ️ Para Excel/CSV, o sistema buscará colunas: Data, Valor, Categoria, Descrição, Tipo.")
+                if st.button("Importar Planilha", type="primary"):
+                    try:
+                        if ftype == 'xlsx': df_up = pd.read_excel(up_file)
+                        else: df_up = pd.read_csv(up_file)
+                        
+                        # Normalização de Colunas Robustas
+                        col_map = {
+                            'Data/Hora': 'date', 'Data': 'date',
+                            'Valor (R$)': 'amount', 'Valor': 'amount',
+                            'Categoria': 'category', 
+                            'Descrição': 'description', 'Desc': 'description',
+                            'Tipo': 'type'
+                        }
+                        df_up = df_up.rename(columns=col_map)
+                        
+                        count = 0
+                        with st.status("Processando dados...") as status:
+                            for _, r in df_up.iterrows():
+                                try:
+                                    # Tratamento de Data
+                                    d_val = r.get('date')
+                                    if isinstance(d_val, str):
+                                        try: d_obj = datetime.strptime(d_val, '%d/%m/%Y %H:%M')
+                                        except: 
+                                            try: d_obj = datetime.strptime(d_val, '%Y-%m-%d')
+                                            except: d_obj = datetime.now(FUSO_BR)
+                                    else: d_obj = d_val if d_val else datetime.now(FUSO_BR)
                                     
+                                    # Validações Básicas
+                                    val_float = float(r.get('amount', 0))
+                                    cat_str = str(r.get('category', 'Outros'))
+                                    desc_str = str(r.get('description', 'Importado'))
+                                    type_str = str(r.get('type', 'Despesa'))
+
+                                    # Registra
                                     res = service.register_transaction(
-                                        user, tr['date'], tr['amount'], cat_final, 
-                                        tr['description'], tipo_final
+                                        user, d_obj, val_float, cat_str, desc_str, type_str
                                     )
                                     if res.is_success: count += 1
-                                
-                                st.success(f"{count} transações importadas com sucesso!")
-                                time.sleep(1.5)
-                                st.rerun()
-            else:
-                st.error("Módulo 'ofx_importer' não carregado ou dependências faltando (instale 'ofxparse').")
+                                except Exception as e:
+                                    logger.error(f"Ignorando linha inválida: {e}")
+                            status.update(label="Concluído!", state="complete")
+                        
+                        st.success(f"{count} registros importados com sucesso!"); time.sleep(1.5); st.rerun()
 
-        st.divider()
-        
+                    except Exception as e:
+                        st.error(f"Erro na leitura do arquivo: {e}")
+
+    with tabs[2]:
         st.markdown("### ✍️ Lançamento Manual")
         c1, c2 = st.columns(2)
         default_val = st.session_state.manual_form.get('amount', 0.0)
@@ -280,7 +324,7 @@ def main():
                 st.toast("Sucesso!", icon="💾"); st.session_state.manual_form = {}; time.sleep(1); st.rerun()
             else: st.error(result.error)
 
-    with tabs[2]:
+    with tabs[3]:
         if start_date and end_date:
             c_tit, c_eye = st.columns([6, 1])
             c_tit.subheader("Visão Geral")
@@ -335,7 +379,7 @@ def main():
             else: st.warning("Sem dados.")
         else: st.info("Selecione um período.")
 
-    with tabs[3]:
+    with tabs[4]:
         st.subheader("Carteira de Ativos")
         if not df_global.empty:
             invs = df_global[df_global['category'].str.contains("Invest", case=False, na=False)].sort_values('date', ascending=False)
@@ -361,7 +405,7 @@ def main():
             else: st.info("Carteira vazia.")
         else: st.info("Carteira vazia.")
 
-    with tabs[4]:
+    with tabs[5]:
         c_h, c_b = st.columns([4,1])
         c_h.markdown("#### Monitoramento de Metas")
         @st.dialog("Nova Meta")
@@ -392,7 +436,7 @@ def main():
                     if st.button("🗑️", key=f"dm_{idx}"): delete_meta_dialog(c)
         else: st.info("Defina metas.")
 
-    with tabs[5]:
+    with tabs[6]:
         with st.container(border=True):
             b1, b2 = st.columns(2)
             if not df_global.empty:
@@ -434,7 +478,7 @@ def main():
             if st.button("⚠️ Resetar Dados"): confirm_nuke()
         else: st.info("Vazio.")
 
-    with tabs[6]:
+    with tabs[7]:
         c_head, c_trash = st.columns([5, 1])
         c_head.markdown("#### 🧠 Coach Financeiro")
         
